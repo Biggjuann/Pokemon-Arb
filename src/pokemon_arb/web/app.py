@@ -7,12 +7,13 @@ import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BeforeValidator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -39,6 +40,33 @@ SORTS = {
     "confidence": Deal.match_confidence.desc(),
     "newest": Deal.created_at.desc(),
 }
+
+
+def _blank_to_none(value: Any) -> Any:
+    """Treat an empty form field as "no filter" instead of a 422.
+
+    A number input the user never filled in still submits as ``field=``, so
+    every optional numeric filter has to tolerate the empty string.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+# Query() must live inside the Annotated: passing Query(...) as the *default*
+# makes FastAPI rebuild the field from the plain type and silently drop the
+# BeforeValidator, which is exactly the bug this guards against.
+BlankableFloat = Annotated[float | None, BeforeValidator(_blank_to_none), Query()]
+BlankableInt = Annotated[int | None, BeforeValidator(_blank_to_none), Query()]
+
+DEFAULT_BOARD_LIMIT = 100
+DEFAULT_API_LIMIT = 50
+MAX_LIMIT = 500
+
+
+def _clamp_limit(limit: int | None, default: int) -> int:
+    return min(max(limit or default, 1), MAX_LIMIT)
+
 
 _scan_lock = threading.Lock()
 _scan_state: dict[str, Any] = {"running": False, "last_error": None}
@@ -162,12 +190,13 @@ def create_app() -> FastAPI:
         status: str = Query("new"),
         sort: str = Query("score"),
         set_name: str | None = Query(None),
-        min_roi: float = Query(0.0),
-        max_cost: float | None = Query(None),
-        min_confidence: float = Query(0.0),
+        min_roi: BlankableFloat = None,
+        max_cost: BlankableFloat = None,
+        min_confidence: BlankableFloat = None,
         hide_risky: bool = Query(False),
-        limit: int = Query(100, le=500),
+        limit: BlankableInt = None,
     ) -> HTMLResponse:
+        limit = _clamp_limit(limit, DEFAULT_BOARD_LIMIT)
         stmt = select(Deal).join(Listing).join(Product).where(Listing.is_active.is_(True))
         if status != "all":
             stmt = stmt.where(Deal.status == status)
@@ -207,9 +236,9 @@ def create_app() -> FastAPI:
                     "status": status,
                     "sort": sort,
                     "set_name": set_name or "",
-                    "min_roi": min_roi,
+                    "min_roi": min_roi or "",
                     "max_cost": max_cost or "",
-                    "min_confidence": min_confidence,
+                    "min_confidence": min_confidence or "",
                     "hide_risky": hide_risky,
                     "limit": limit,
                 },
@@ -290,11 +319,14 @@ def create_app() -> FastAPI:
     def api_deals(
         db: Session = Depends(get_db),
         status: str = Query("new"),
-        limit: int = Query(50, le=500),
-        min_score: float = Query(0.0),
+        limit: BlankableInt = None,
+        min_score: BlankableFloat = None,
     ) -> list[dict[str, Any]]:
+        limit = _clamp_limit(limit, DEFAULT_API_LIMIT)
         stmt = (
-            select(Deal).join(Listing).where(Listing.is_active.is_(True), Deal.score >= min_score)
+            select(Deal)
+            .join(Listing)
+            .where(Listing.is_active.is_(True), Deal.score >= (min_score or 0.0))
         )
         if status != "all":
             stmt = stmt.where(Deal.status == status)

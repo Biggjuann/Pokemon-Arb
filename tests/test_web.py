@@ -122,3 +122,67 @@ def test_scan_trigger_redirects(client):
     response = client.post("/scan", data={"demo": "true"}, follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/scans"
+
+
+# --- blank filter fields ---------------------------------------------------
+# An HTML number input the user never filled in submits as `field=`, which
+# used to 422 the whole board. These lock that in.
+
+
+def test_the_form_url_with_every_field_blank(client):
+    """The exact URL the filter form produces when nothing is filled in."""
+    response = client.get(
+        "/?status=new&sort=score&set_name=&min_roi=&max_cost=&min_confidence=&hide_risky=true"
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "max_cost=",
+        "min_roi=",
+        "min_confidence=",
+        "limit=",
+        "min_roi=&max_cost=&min_confidence=&limit=",
+        "max_cost=   ",
+    ],
+)
+def test_blank_numeric_filters_are_ignored(client, query):
+    response = client.get(f"/?status=all&{query}")
+    assert response.status_code == 200
+
+
+def test_blank_filters_match_no_filters_at_all(client):
+    blank = client.get("/?status=all&min_roi=&max_cost=&min_confidence=").text
+    absent = client.get("/?status=all").text
+    assert blank.count('class="score"') == absent.count('class="score"')
+
+
+def test_blank_field_does_not_round_trip_as_none(client):
+    """The rendered form must come back empty, not containing the word None."""
+    response = client.get("/?status=all&max_cost=&min_roi=&min_confidence=")
+    assert 'value="None"' not in response.text
+
+
+def test_populated_numeric_filters_still_apply(client):
+    everything = client.get("/?status=all&limit=500").text.count('class="score"')
+    filtered = client.get("/?status=all&limit=500&max_cost=1").text.count('class="score"')
+    assert filtered < everything
+
+
+def test_api_tolerates_blank_numeric_params(client):
+    response = client.get("/api/deals?status=all&limit=&min_score=")
+    assert response.status_code == 200
+    assert len(response.json()) <= 50  # falls back to the default limit
+
+
+def test_limit_is_clamped_not_rejected(client):
+    assert client.get("/?status=all&limit=99999").status_code == 200
+    assert client.get("/?status=all&limit=0").status_code == 200
+    assert len(client.get("/api/deals?status=all&limit=99999").json()) <= 500
+
+
+def test_genuinely_invalid_numbers_are_still_rejected(client):
+    """Blank is 'no filter'; garbage is still a client error."""
+    assert client.get("/?status=all&max_cost=abc").status_code == 422
