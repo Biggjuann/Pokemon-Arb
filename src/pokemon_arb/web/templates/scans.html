@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Scans - Pokemon Arb{% endblock %}
+{% block content %}
+<section class="summary">
+  <div class="stat"><span class="label">Cards tracked</span><span class="value">{{ counts.products }}</span></div>
+  <div class="stat"><span class="label">Search targets</span><span class="value">{{ counts.targets }}</span></div>
+  <div class="stat"><span class="label">Listings seen</span><span class="value">{{ counts.listings }}</span></div>
+  <div class="stat"><span class="label">Mode</span><span class="value small">
+    {% if settings.demo_mode or not settings.has_ebay_credentials %}demo (no eBay keys){% else %}live &middot; {{ settings.ebay_env }}{% endif %}
+  </span></div>
+</section>
+
+<table class="deals">
+  <thead><tr><th>Started</th><th>Status</th><th class="num">Targets</th><th class="num">Listings</th>
+    <th class="num">New</th><th class="num">Deals</th><th class="num">API calls</th><th class="num">Duration</th><th>Notes</th></tr></thead>
+  <tbody>
+  {% for run in runs %}
+    <tr>
+      <td>{{ run.started_at.strftime('%b %d %H:%M:%S') }}</td>
+      <td><span class="pill {{ run.status }}">{{ run.status }}</span></td>
+      <td class="num">{{ run.targets_scanned }}</td>
+      <td class="num">{{ run.listings_seen }}</td>
+      <td class="num">{{ run.listings_new }}</td>
+      <td class="num good">{{ run.deals_found }}</td>
+      <td class="num">{{ run.api_calls }}</td>
+      <td class="num">{{ '%.1fs' | format(run.duration_seconds) if run.duration_seconds else '--' }}</td>
+      <td class="sub">
+        {%- if run.error %}<span class="bad">{{ run.error[:120] }}</span>
+        {%- elif run.stats %}{{ run.stats.rejected_matches }} rejected &middot; {{ run.stats.below_thresholds }} under thresholds{% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="9" class="empty">No scans yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

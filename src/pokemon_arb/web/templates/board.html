@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="summary">
+  <div class="stat"><span class="label">Deals shown</span><span class="value">{{ totals.count }}</span></div>
+  <div class="stat"><span class="label">Capital required</span><span class="value">{{ totals.cost | money }}</span></div>
+  <div class="stat"><span class="label">Modeled profit</span><span class="value good">{{ totals.profit | money }}</span></div>
+  <div class="stat"><span class="label">Last scan</span><span class="value small">
+    {% if last_scan %}{{ last_scan.started_at.strftime('%b %d %H:%M') }} &middot; {{ last_scan.deals_found }} found{% else %}never{% endif %}
+  </span></div>
+</section>
+
+<form class="filters" method="get" action="/">
+  <label>Status
+    <select name="status">
+      <option value="all" {{ 'selected' if filters.status == 'all' }}>all</option>
+      {% for s in statuses %}
+        <option value="{{ s }}" {{ 'selected' if filters.status == s }}>{{ s }} ({{ status_counts.get(s, 0) }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Sort
+    <select name="sort">
+      {% for s in sorts %}<option value="{{ s }}" {{ 'selected' if filters.sort == s }}>{{ s }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Set
+    <select name="set_name">
+      <option value="">any</option>
+      {% for s in sets %}<option value="{{ s }}" {{ 'selected' if filters.set_name == s }}>{{ s }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Min ROI <input type="number" name="min_roi" step="0.05" min="0" value="{{ filters.min_roi }}"></label>
+  <label>Max cost $ <input type="number" name="max_cost" step="10" min="0" value="{{ filters.max_cost }}"></label>
+  <label>Min confidence <input type="number" name="min_confidence" step="0.05" min="0" max="1" value="{{ filters.min_confidence }}"></label>
+  <label class="check"><input type="checkbox" name="hide_risky" value="true" {{ 'checked' if filters.hide_risky }}> Low risk only</label>
+  <button type="submit">Apply</button>
+</form>
+
+{% if not deals %}
+  <p class="empty">No deals match these filters. Run a scan, or loosen the thresholds.</p>
+{% else %}
+<table class="deals">
+  <thead>
+    <tr>
+      <th>Score</th><th>Card</th><th>Listing</th><th class="num">Cost</th><th class="num">Comp</th>
+      <th class="num">Profit</th><th class="num">ROI</th><th class="num">Off comp</th>
+      <th class="num">Conf</th><th>Risk</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for deal in deals %}
+    <tr class="{{ 'risky' if deal.risk_penalty > 0.4 else '' }}">
+      <td class="score">{{ '%.0f' | format(deal.score) }}</td>
+      <td>
+        <a href="/deals/{{ deal.id }}" class="card-name">{{ deal.product.name }}</a>
+        <div class="sub">{{ deal.product.set_name }}</div>
+      </td>
+      <td class="listing">
+        <a href="{{ deal.listing.url }}" target="_blank" rel="noopener">{{ deal.listing.title[:78] }}</a>
+        <div class="sub">
+          {{ deal.listing.seller_username or 'unknown seller' }}
+          {%- if deal.listing.seller_feedback_score is not none %} &middot; {{ deal.listing.seller_feedback_score }} fb{% endif %}
+          {%- if deal.listing.seller_feedback_pct is not none %} &middot; {{ deal.listing.seller_feedback_pct }}%{% endif %}
+        </div>
+      </td>
+      <td class="num">{{ deal.total_cost_cents | money }}</td>
+      <td class="num">{{ deal.market_value_cents | money }}</td>
+      <td class="num good">{{ deal.profit_cents | money }}</td>
+      <td class="num">{{ deal.roi | pct }}</td>
+      <td class="num">{{ deal.discount_pct | pct }}</td>
+      <td class="num conf-{{ 'hi' if deal.match_confidence >= 0.85 else ('mid' if deal.match_confidence >= 0.7 else 'lo') }}">
+        {{ '%.2f' | format(deal.match_confidence) }}
+      </td>
+      <td class="flags">
+        {% for flag in deal.risk_flags %}<span class="flag" title="{{ risk_weights.get(flag, (0, flag))[1] }}">{{ flag.replace('_', ' ') | lower }}</span>{% endfor %}
+      </td>
+      <td class="actions">
+        <form method="post" action="/deals/{{ deal.id }}/status">
+          <input type="hidden" name="redirect_to" value="{{ request.url.path }}?{{ request.url.query }}">
+          <button name="status" value="watching" title="Watch">&#9733;</button>
+          <button name="status" value="dismissed" title="Dismiss">&#10005;</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

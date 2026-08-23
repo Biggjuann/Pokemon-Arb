@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ deal.product.name }} - Pokemon Arb{% endblock %}
+{% block content %}
+<a class="back" href="/">&larr; back to board</a>
+
+<div class="detail-head">
+  <div>
+    <h1>{{ deal.product.name }}</h1>
+    <p class="sub">{{ deal.product.set_name }}
+      {%- if deal.product.card_number %} &middot; card #{{ deal.product.card_number }}{% endif %}
+      {%- if deal.product.sales_volume %} &middot; {{ deal.product.sales_volume }} sales/yr{% endif %}</p>
+  </div>
+  <div class="score-badge">
+    <span class="value">{{ '%.0f' | format(deal.score) }}</span>
+    <span class="label">risk-adjusted score</span>
+  </div>
+</div>
+
+<div class="panels">
+  <section class="panel">
+    <h2>The listing</h2>
+    <p class="listing-title"><a href="{{ deal.listing.url }}" target="_blank" rel="noopener">{{ deal.listing.title }}</a></p>
+    <dl>
+      <dt>Buy it now</dt><dd>{{ deal.listing.price_cents | money }}</dd>
+      <dt>Shipping</dt><dd>{{ deal.listing.shipping_cents | money }}</dd>
+      <dt>Format</dt><dd>{{ deal.listing.buying_format }}</dd>
+      <dt>Condition</dt><dd>{{ deal.listing.condition or 'not stated' }}</dd>
+      <dt>Seller</dt><dd>{{ deal.listing.seller_username or 'unknown' }}
+        ({{ deal.listing.seller_feedback_score if deal.listing.seller_feedback_score is not none else '?' }} feedback,
+        {{ deal.listing.seller_feedback_pct if deal.listing.seller_feedback_pct is not none else '?' }}%)</dd>
+      <dt>Location</dt><dd>{{ deal.listing.item_location or 'unknown' }}</dd>
+      <dt>First seen</dt><dd>{{ deal.listing.first_seen_at.strftime('%b %d %H:%M') }}</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>The math</h2>
+    <table class="math">
+      <tr><td>Comp used</td><td class="num">{{ deal.market_value_cents | money }}</td><td class="note">PriceCharting recent sales</td></tr>
+      <tr><td>Condition haircut</td><td class="num">&times;{{ settings.condition_haircut }}</td><td class="note">raw cards clear under the running average</td></tr>
+      <tr class="sum"><td>Realistic resale</td><td class="num">{{ deal.adjusted_value_cents | money }}</td><td></td></tr>
+      <tr><td>Selling fees</td><td class="num bad">-{{ (deal.adjusted_value_cents - deal.net_proceeds_cents - settings.outbound_shipping_cents) | money }}</td><td class="note">{{ (settings.sell_fee_rate) | pct(1) }} + {{ settings.sell_fee_fixed_cents | money }}</td></tr>
+      <tr><td>Ship to buyer</td><td class="num bad">-{{ settings.outbound_shipping_cents | money }}</td><td></td></tr>
+      <tr class="sum"><td>Net proceeds</td><td class="num">{{ deal.net_proceeds_cents | money }}</td><td></td></tr>
+      <tr><td>Landed price</td><td class="num bad">-{{ (deal.listing.price_cents + deal.listing.shipping_cents) | money }}</td><td class="note">item + inbound shipping</td></tr>
+      <tr><td>Sales tax</td><td class="num bad">-{{ (deal.total_cost_cents - deal.listing.price_cents - deal.listing.shipping_cents) | money }}</td><td class="note">{{ settings.buyer_tax_rate | pct(1) }}</td></tr>
+      <tr class="sum total"><td>Profit</td><td class="num good">{{ deal.profit_cents | money }}</td><td class="note">{{ deal.roi | pct }} ROI &middot; {{ deal.discount_pct | pct }} below comp</td></tr>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>Why we think it's this card</h2>
+    <p class="confidence conf-{{ 'hi' if deal.match_confidence >= 0.85 else ('mid' if deal.match_confidence >= 0.7 else 'lo') }}">
+      confidence {{ '%.2f' | format(deal.match_confidence) }}
+    </p>
+    <ul class="reasons">
+      {% for reason in deal.match_reason.split('; ') %}<li>{{ reason }}</li>{% endfor %}
+    </ul>
+    <h3>Comp ladder</h3>
+    <dl class="ladder">
+      <dt>Ungraded</dt><dd>{{ deal.product.ungraded_cents | money }}</dd>
+      <dt>Grade 7</dt><dd>{{ deal.product.grade7_cents | money }}</dd>
+      <dt>Grade 8</dt><dd>{{ deal.product.grade8_cents | money }}</dd>
+      <dt>Grade 9</dt><dd>{{ deal.product.grade9_cents | money }}</dd>
+      <dt>Grade 9.5</dt><dd>{{ deal.product.grade95_cents | money }}</dd>
+      <dt>PSA 10</dt><dd>{{ deal.product.psa10_cents | money }}</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>Risk</h2>
+    {% if deal.risk_flags %}
+      <p class="penalty">Expected value discounted {{ deal.risk_penalty | pct }}</p>
+      <ul class="risks">
+        {% for flag in deal.risk_flags %}
+          <li><span class="flag">{{ flag.replace('_', ' ') | lower }}</span> {{ risk_weights.get(flag, (0, 'unrecognized flag'))[1] }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="clean">No risk flags raised.</p>
+    {% endif %}
+
+    <form method="post" action="/deals/{{ deal.id }}/status" class="status-form">
+      <input type="hidden" name="redirect_to" value="/deals/{{ deal.id }}">
+      <label>Status
+        <select name="status">
+          {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if deal.status == s }}>{{ s }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Notes <input type="text" name="notes" value="{{ deal.notes or '' }}" placeholder="e.g. asked seller for back photo"></label>
+      <button type="submit">Save</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

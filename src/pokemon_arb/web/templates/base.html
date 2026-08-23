@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Pokemon Arb{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#127183;</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">POKE<span>ARB</span></a>
+    <nav>
+      <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Deals</a>
+      <a href="/scans" class="{{ 'active' if request.url.path == '/scans' else '' }}">Scans</a>
+      <a href="/api/docs">API</a>
+    </nav>
+    <form method="post" action="/scan" class="scan-form">
+      <button type="submit" {{ 'disabled' if scan_state and scan_state.running else '' }}>
+        {{ 'Scanning...' if scan_state and scan_state.running else 'Run scan' }}
+      </button>
+    </form>
+  </header>
+  {% if scan_state and scan_state.last_error %}
+    <div class="banner error">Last scan failed: {{ scan_state.last_error }}</div>
+  {% endif %}
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
