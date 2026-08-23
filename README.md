@@ -99,12 +99,18 @@ carry the spread and are the ones sellers most often misprice.
 
 ## Deploying to Railway
 
-The repo ships `railway.json`, `nixpacks.toml` and a `Procfile`.
+The repo ships a `Dockerfile` and `railway.json`.
 
-**1. Create the service.** Point Railway at this repo. Nixpacks builds it with
-Python 3.11 and `pip install .`; the start command is `pokearb serve`, which
-binds `0.0.0.0:$PORT` from Railway's injected `PORT`. The healthcheck is
-`/healthz`.
+**1. Create the service.** Point Railway at this repo; `railway.json` selects the
+Dockerfile builder. The image is `python:3.11-slim`, runs as a non-root user, and
+starts `pokearb serve`, which binds `0.0.0.0:$PORT` from Railway's injected
+`PORT`. The healthcheck is `/healthz`.
+
+A Dockerfile is used rather than Nixpacks deliberately. Nixpacks copies only the
+dependency manifest before its `install` phase, so `pip install .` runs before
+`src/` exists — and its Nix Python has no `pip` of its own. The Dockerfile has
+neither problem, and `docker build -t pokemon-arb . && docker run -p 8000:8000
+pokemon-arb` reproduces the deploy locally.
 
 **2. Add Postgres.** SQLite does not survive a redeploy — Railway containers have
 ephemeral filesystems, so your scan history and dismissed deals would vanish on

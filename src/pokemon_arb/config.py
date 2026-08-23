@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -17,7 +13,10 @@ class Settings(BaseSettings):
     )
 
     # --- storage -------------------------------------------------------
-    database_url: str = Field(default=f"sqlite:///{REPO_ROOT / 'data' / 'pokearb.db'}")
+    # Relative to the working directory, not the source tree: once the package
+    # is pip-installed the source lives in site-packages, which is the wrong
+    # place (and often not writable) for a database.
+    database_url: str = "sqlite:///./data/pokearb.db"
 
     # --- eBay Browse API ----------------------------------------------
     ebay_client_id: str | None = None
