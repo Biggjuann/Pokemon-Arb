@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Data too old - Pokemon Arb{% endblock %}
+{% block content %}
+<a class="back" href="/">&larr; back to board</a>
+
+<section class="panel stale-panel">
+  <h1>This listing's data is {{ age }} old</h1>
+  <p>
+    eBay's API License Agreement (&sect;8.1(c)) does not allow listing
+    information to be displayed once it is more than
+    {{ '%.0f' | format(window_hours) }} hours behind eBay, so the price, title
+    and seller details for <strong>{{ card_name }}</strong> are not shown here.
+  </p>
+  <p class="sub">
+    Run a scan to refresh it. If it is still listed at the same price it will
+    reappear on the board; if it has sold or changed, the board will reflect that.
+  </p>
+  <form method="post" action="/scan" class="stale-actions">
+    <button type="submit" {{ 'disabled' if scan_state and scan_state.running }}>
+      {{ 'Scanning...' if scan_state and scan_state.running else 'Run a scan now' }}
+    </button>
+    <a class="secondary" href="/scans">scan history</a>
+  </form>
+</section>
+{% endblock %}

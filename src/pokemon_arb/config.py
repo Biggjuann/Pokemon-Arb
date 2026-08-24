@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     # Ignore comps with almost no recent sales -- the "market value" is noise.
     min_sales_volume: int = 3
 
+    # --- data freshness --------------------------------------------------
+    # eBay's API License Agreement 8.1(c) caps displayed listing data at six
+    # hours old. This may be tightened but is clamped to 360 on the way out --
+    # see freshness.MAX_DISPLAY_AGE.
+    listing_freshness_minutes: int = 360
+
     # --- scanning ------------------------------------------------------
     scan_top_cards_per_set: int = 25
     scan_listings_per_target: int = 50

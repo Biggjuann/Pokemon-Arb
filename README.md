@@ -228,10 +228,35 @@ tuning:
 | `TOO_GOOD_TO_BE_TRUE_DISCOUNT` | `0.90` | Discounts past this are flagged |
 | `SCAN_TOP_CARDS_PER_SET` | `25` | Targets built per set |
 | `EBAY_MAX_CALLS_PER_SCAN` | `400` | API budget per scan |
+| `LISTING_FRESHNESS_MINUTES` | `360` | Max age of displayed eBay data; clamped to 360 |
 
 `CONDITION_HAIRCUT` is the one to revisit first. It encodes "an ungraded card of
 unknown condition sells for less than the average of all recent ungraded sales."
 If you buy conservatively and the cards arrive better than modeled, raise it.
+
+---
+
+## Listing data goes stale after six hours
+
+eBay's API License Agreement §8.1(c) says displayed listing information may not
+be more than six hours behind eBay. The board enforces that **per request**, not
+as a flag written during a scan — if scanning stops for any reason (rate limit,
+expired credentials, a dead scheduler), cached listings age out on their own
+instead of sitting on the board looking current.
+
+Past the window, deals drop off the board and the API, and the deal page returns
+`409` with a refresh prompt rather than rendering a stale price, title or seller.
+`LISTING_FRESHNESS_MINUTES` can tighten the window but is clamped to 360 — no
+configuration can put the app out of compliance.
+
+The practical consequence is that **scan cadence and the display window are
+coupled**: scanning every 4 hours keeps the board populated, every 8 hours means
+it is empty much of the time. `pokearb scan` on a Railway cron schedule of
+`0 */4 * * *` is the intended setup, and the in-process scheduler logs a warning
+if `SCAN_INTERVAL_MINUTES` exceeds the window.
+
+Note this is separate from the 3-day horizon in `scan.py`, which is how long
+before a listing is presumed gone from eBay entirely.
 
 ---
 
@@ -243,6 +268,7 @@ src/pokemon_arb/
   models.py            Product, Listing, Deal, Target, ScanRun, PricePoint
   store.py             upserts and read queries
   money.py             integer-cent arithmetic
+  freshness.py         the six-hour display rule, in one place
   matching/
     normalize.py       eBay title -> card number, variant, language, hazards
     matcher.py         listing <-> product confidence scoring
@@ -275,5 +301,11 @@ Run them with `pytest`; lint with `ruff check src tests`.
   price is not the price you pay.
 - **English cards only.** Non-English listings are rejected rather than valued,
   because they trade against different comps.
-- **Both APIs have terms.** The Browse API keyset and the PriceCharting
-  subscription are yours; keep your call volume inside what they allow.
+- **Both APIs have terms, and eBay's are restrictive.** Beyond the six-hour rule
+  above, the [API License Agreement](https://developer.ebay.com/join/api-license-agreement)
+  §9(e) bars using eBay content "either alone or in combination with third-party
+  information, to suggest or model prices for items listed on eBay Site", §9(c)
+  bars building anything competitive with eBay services, and §8.1(d) requires
+  written permission to derive average selling price or aggregated seller data.
+  Read those before pointing this at production keys and decide for yourself
+  where your use sits.

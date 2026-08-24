@@ -28,6 +28,9 @@ from .scoring import evaluate, max_actionable_price_cents
 
 log = logging.getLogger(__name__)
 
+# When to conclude a listing is gone from eBay entirely. This is *not* the
+# display-freshness rule -- see freshness.py, which governs what may be shown
+# and is enforced per request.
 STALE_LISTING_AFTER = dt.timedelta(days=3)
 
 

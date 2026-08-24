@@ -9,6 +9,19 @@
   </span></div>
 </section>
 
+{% if freshness.withheld %}
+  <div class="banner stale-note">
+    {{ freshness.withheld }} deal{{ 's' if freshness.withheld != 1 }} hidden: eBay data
+    older than {{ '%.0f' | format(freshness.window_hours) }}h cannot be displayed
+    (API License Agreement &sect;8.1(c)).
+    <form method="post" action="/scan" class="inline-scan">
+      <button type="submit" {{ 'disabled' if scan_state and scan_state.running }}>
+        {{ 'Scanning...' if scan_state and scan_state.running else 'Refresh now' }}
+      </button>
+    </form>
+  </div>
+{% endif %}
+
 <form class="filters" method="get" action="/">
   <label>Status
     <select name="status">
@@ -37,7 +50,15 @@
 </form>
 
 {% if not deals %}
-  <p class="empty">No deals match these filters. Run a scan, or loosen the thresholds.</p>
+  <p class="empty">
+    No deals match these filters.
+    {% if freshness.withheld %}
+      All current deals have eBay data older than
+      {{ '%.0f' | format(freshness.window_hours) }}h &mdash; run a scan to refresh.
+    {% else %}
+      Run a scan, or loosen the thresholds.
+    {% endif %}
+  </p>
 {% else %}
 <table class="deals">
   <thead>
@@ -71,6 +92,7 @@
       <td class="num conf-{{ 'hi' if deal.match_confidence >= 0.85 else ('mid' if deal.match_confidence >= 0.7 else 'lo') }}">
         {{ '%.2f' | format(deal.match_confidence) }}
       </td>
+      <td class="num sub">{{ age_label(deal.listing) }}</td>
       <td class="flags">
         {% for flag in deal.risk_flags %}<span class="flag" title="{{ risk_weights.get(flag, (0, flag))[1] }}">{{ flag.replace('_', ' ') | lower }}</span>{% endfor %}
       </td>

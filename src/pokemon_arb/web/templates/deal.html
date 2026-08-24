@@ -30,6 +30,7 @@
         {{ deal.listing.seller_feedback_pct if deal.listing.seller_feedback_pct is not none else '?' }}%)</dd>
       <dt>Location</dt><dd>{{ deal.listing.item_location or 'unknown' }}</dd>
       <dt>First seen</dt><dd>{{ deal.listing.first_seen_at.strftime('%b %d %H:%M') }}</dd>
+      <dt>Data age</dt><dd>{{ listing_age }} old</dd>
     </dl>
   </section>
 

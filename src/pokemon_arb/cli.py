@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from . import store
 from .config import get_settings
 from .db import get_sessionmaker, init_db
+from .freshness import age_label, display_window, fresh_clause
 from .models import Deal, Listing, Product, Target
 from .money import fmt, pct
 from .pipeline.scan import ScanService
@@ -125,16 +126,25 @@ def top(
     """Print the current ranked deal board."""
     init_db()
     with get_sessionmaker()() as session:
+        settings = get_settings()
         stmt = (
             select(Deal)
             .join(Listing)
-            .where(Listing.is_active.is_(True), Deal.match_confidence >= min_confidence)
+            .where(
+                Listing.is_active.is_(True),
+                fresh_clause(settings),
+                Deal.match_confidence >= min_confidence,
+            )
         )
         if status != "all":
             stmt = stmt.where(Deal.status == status)
         deals = list(session.scalars(stmt.order_by(Deal.score.desc()).limit(limit)))
         if not deals:
-            typer.secho("No deals. Run 'pokearb scan' first.", fg=typer.colors.YELLOW)
+            hours = display_window(settings).total_seconds() / 3600
+            typer.secho(
+                f"No deals with listing data under {hours:.0f}h old. Run 'pokearb scan'.",
+                fg=typer.colors.YELLOW,
+            )
             return
         header = (
             f"{'SCORE':>7}  {'PROFIT':>10} {'ROI':>6} {'OFF':>5} {'CONF':>5}  {'CARD':<32} LISTING"
@@ -146,6 +156,9 @@ def top(
                 f"{deal.score:>7.0f}  {fmt(deal.profit_cents):>10} {pct(deal.roi):>6} "
                 f"{pct(deal.discount_pct):>5} {deal.match_confidence:>5.2f}  "
                 f"{deal.product.name[:32]:<32} {deal.listing.title[:46]}"
+            )
+            typer.secho(
+                f"{'':>7}  seen {age_label(deal.listing)} ago", fg=typer.colors.BRIGHT_BLACK
             )
             if deal.risk_flags:
                 typer.secho(f"{'':>7}  risk: {', '.join(deal.risk_flags)}", fg=typer.colors.YELLOW)

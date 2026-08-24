@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from .. import store
 from ..config import get_settings
 from ..db import get_sessionmaker, init_db
+from ..freshness import age_label, cutoff, display_window, fresh_clause, is_fresh
 from ..models import Deal, Listing, Product, ScanRun, Target
 from ..money import fmt, pct
 from ..pipeline.scoring import RISK_WEIGHTS
@@ -157,6 +158,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception:
             log.exception("demo seeding failed")
     if settings.scan_interval_minutes > 0:
+        window_minutes = display_window(settings).total_seconds() / 60
+        if settings.scan_interval_minutes > window_minutes:
+            log.warning(
+                "SCAN_INTERVAL_MINUTES=%s exceeds the %.0f-minute display window; "
+                "listings will spend part of each cycle hidden as stale",
+                settings.scan_interval_minutes,
+                window_minutes,
+            )
         _start_scheduler(settings.scan_interval_minutes)
     yield
 
@@ -197,7 +206,16 @@ def create_app() -> FastAPI:
         limit: BlankableInt = None,
     ) -> HTMLResponse:
         limit = _clamp_limit(limit, DEFAULT_BOARD_LIMIT)
-        stmt = select(Deal).join(Listing).join(Product).where(Listing.is_active.is_(True))
+        settings = get_settings()
+        # eBay listing data older than the licence window must not be shown,
+        # so this is evaluated per request rather than trusted from a flag a
+        # scan wrote earlier.
+        stmt = (
+            select(Deal)
+            .join(Listing)
+            .join(Product)
+            .where(Listing.is_active.is_(True), fresh_clause(settings))
+        )
         if status != "all":
             stmt = stmt.where(Deal.status == status)
         if set_name:
@@ -211,6 +229,15 @@ def create_app() -> FastAPI:
         if hide_risky:
             stmt = stmt.where(Deal.risk_penalty <= 0.25)
         deals = list(db.scalars(stmt.order_by(SORTS.get(sort, SORTS["score"])).limit(limit)))
+
+        # Deals that only fail the freshness test, so the board can say so
+        # instead of just looking empty.
+        withheld = db.scalar(
+            select(func.count())
+            .select_from(Deal)
+            .join(Listing)
+            .where(Listing.is_active.is_(True), ~fresh_clause(settings))
+        )
 
         totals = {
             "count": len(deals),
@@ -245,6 +272,12 @@ def create_app() -> FastAPI:
                 "last_scan": store.latest_scan(db),
                 "scan_state": _scan_state,
                 "risk_weights": RISK_WEIGHTS,
+                "freshness": {
+                    "window_hours": display_window(settings).total_seconds() / 3600,
+                    "cutoff": cutoff(settings),
+                    "withheld": withheld or 0,
+                },
+                "age_label": age_label,
             },
         )
 
@@ -253,11 +286,28 @@ def create_app() -> FastAPI:
         deal = db.get(Deal, deal_id)
         if deal is None:
             raise HTTPException(status_code=404, detail="deal not found")
+        settings = get_settings()
+        if not is_fresh(deal.listing, settings):
+            # Showing the cached price, title or seller here would put stale
+            # eBay content on screen. Offer a refresh instead.
+            return templates.TemplateResponse(
+                request,
+                "stale.html",
+                {
+                    "deal_id": deal.id,
+                    "card_name": deal.product.display_name,
+                    "age": age_label(deal.listing),
+                    "window_hours": display_window(settings).total_seconds() / 3600,
+                    "scan_state": _scan_state,
+                },
+                status_code=409,
+            )
         return templates.TemplateResponse(
             request,
             "deal.html",
             {
                 "deal": deal,
+                "listing_age": age_label(deal.listing),
                 "settings": get_settings(),
                 "risk_weights": RISK_WEIGHTS,
                 "statuses": STATUSES,
@@ -326,7 +376,11 @@ def create_app() -> FastAPI:
         stmt = (
             select(Deal)
             .join(Listing)
-            .where(Listing.is_active.is_(True), Deal.score >= (min_score or 0.0))
+            .where(
+                Listing.is_active.is_(True),
+                fresh_clause(get_settings()),
+                Deal.score >= (min_score or 0.0),
+            )
         )
         if status != "all":
             stmt = stmt.where(Deal.status == status)
@@ -351,6 +405,8 @@ def create_app() -> FastAPI:
                 "match_confidence": d.match_confidence,
                 "risk_flags": d.risk_flags,
                 "risk_penalty": d.risk_penalty,
+                "listing_seen_at": d.listing.last_seen_at.isoformat() + "Z",
+                "listing_age": age_label(d.listing),
             }
             for d in deals
         ]

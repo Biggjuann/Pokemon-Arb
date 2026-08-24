@@ -126,3 +126,16 @@ table.math .note { color: var(--muted); font-size: 11.5px; text-align: right; }
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: 6px 8px; min-width: 200px;
 }
+
+/* freshness */
+.banner.stale-note {
+  background: #33290f; color: var(--warn); border-bottom: 1px solid #5a4418;
+  display: flex; align-items: center; gap: 14px; margin: -8px 0 18px; border-radius: 8px;
+}
+.inline-scan { margin-left: auto; }
+.inline-scan button { padding: 5px 12px; }
+.stale-panel { max-width: 640px; }
+.stale-panel h1 { font-size: 20px; margin: 0 0 12px; }
+.stale-panel p { margin: 0 0 12px; }
+.stale-actions { display: flex; align-items: center; gap: 16px; margin-top: 18px; }
+.stale-actions .secondary { color: var(--muted); }
