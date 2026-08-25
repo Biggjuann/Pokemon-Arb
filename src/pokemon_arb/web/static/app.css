@@ -139,3 +139,18 @@ table.math .note { color: var(--muted); font-size: 11.5px; text-align: right; }
 .stale-panel p { margin: 0 0 12px; }
 .stale-actions { display: flex; align-items: center; gap: 16px; margin-top: 18px; }
 .stale-actions .secondary { color: var(--muted); }
+
+/* setup + job banners */
+.banner.info { background: #14283d; color: #7fb2f0; border-bottom: 1px solid var(--accent-2); }
+.banner.ok { background: #12331c; color: var(--good); border-bottom: 1px solid var(--good); }
+.pill.no_targets { background: #33290f; color: var(--warn); }
+.warn-text { color: var(--warn); }
+.panel.setup { margin-bottom: 18px; border-color: var(--accent-2); }
+.setup-form { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin: 14px 0 10px; }
+.setup-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.setup-form input {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px 9px; font-size: 13px;
+}
+.setup-form input[name="queries"] { min-width: 380px; }

@@ -10,6 +10,38 @@
   </span></div>
 </section>
 
+{% if not counts.products or not counts.targets %}
+  <section class="panel setup">
+    <h2>Set-up needed</h2>
+    <p>
+      {% if not counts.products %}
+        No cards are being tracked yet, so a scan has nothing to search for.
+        Load market comps from PriceCharting to build the catalog.
+      {% else %}
+        {{ counts.products }} cards are loaded but no search targets exist.
+        Build targets from the most valuable cards in each set.
+      {% endif %}
+    </p>
+    <form method="post" action="/sync" class="setup-form">
+      <label>Cards to look up
+        <input type="text" name="queries"
+               placeholder="charizard, umbreon vmax  (blank = whole price guide)">
+      </label>
+      <label>Top cards per set
+        <input type="number" name="per_set" value="25" min="1" max="200">
+      </label>
+      <button type="submit" {{ 'disabled' if scan_state and scan_state.running }}>
+        {{ 'Working...' if scan_state and scan_state.running else 'Load comps and build targets' }}
+      </button>
+    </form>
+    <p class="sub">
+      Leaving the box blank downloads the entire pokemon-cards price guide, which
+      needs a PriceCharting subscription and takes a few minutes. Naming a few
+      cards is the faster way to check the pipeline end to end.
+    </p>
+  </section>
+{% endif %}
+
 <table class="deals">
   <thead><tr><th>Started</th><th>Status</th><th class="num">Targets</th><th class="num">Listings</th>
     <th class="num">New</th><th class="num">Deals</th><th class="num">API calls</th><th class="num">Duration</th><th>Notes</th></tr></thead>
@@ -17,7 +49,7 @@
   {% for run in runs %}
     <tr>
       <td>{{ run.started_at.strftime('%b %d %H:%M:%S') }}</td>
-      <td><span class="pill {{ run.status }}">{{ run.status }}</span></td>
+      <td><span class="pill {{ run.status }}">{{ run.status.replace('_', ' ') }}</span></td>
       <td class="num">{{ run.targets_scanned }}</td>
       <td class="num">{{ run.listings_seen }}</td>
       <td class="num">{{ run.listings_new }}</td>
@@ -26,6 +58,7 @@
       <td class="num">{{ '%.1fs' | format(run.duration_seconds) if run.duration_seconds else '--' }}</td>
       <td class="sub">
         {%- if run.error %}<span class="bad">{{ run.error[:120] }}</span>
+        {%- elif run.status == 'no_targets' %}<span class="warn-text">nothing to scan -- no targets configured</span>
         {%- elif run.stats %}{{ run.stats.rejected_matches }} rejected &middot; {{ run.stats.below_thresholds }} under thresholds{% endif %}
       </td>
     </tr>

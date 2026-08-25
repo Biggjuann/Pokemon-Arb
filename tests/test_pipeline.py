@@ -171,9 +171,36 @@ def test_stale_listings_are_deactivated():
         assert session.scalar(select(Listing).where(Listing.id == listing.id)).is_active is False
 
 
-def test_scan_records_a_run_row_even_with_no_targets():
+def test_scan_with_no_targets_reports_it_rather_than_success():
+    """An empty run means an unpopulated catalog; "ok" would hide that."""
     run = _service().run()
-    assert run.status == "ok"
+    assert run.status == "no_targets"
     assert run.targets_scanned == 0
     with get_sessionmaker()() as session:
         assert store.latest_scan(session) is not None
+
+
+def test_scan_with_targets_still_reports_ok():
+    service = _service()
+    service.sync_products(demo_products())
+    service.build_targets(per_set=1)
+    assert service.run().status == "ok"
+
+
+def test_targets_rotate_so_the_tail_is_not_starved():
+    """Value-first ordering rescanned the same top slice forever, leaving the
+    rest permanently outside the freshness window."""
+    service = _service()
+    service.sync_products(demo_products())
+    service.build_targets(per_set=5)
+
+    service.run(max_targets=3)
+    with get_sessionmaker()() as session:
+        first = {t.id for t in session.scalars(select(Target)) if t.last_scanned_at}
+    assert len(first) == 3
+
+    ScanService(ebay_client=DemoEbayClient(seed=7)).run(max_targets=3)
+    with get_sessionmaker()() as session:
+        scanned = {t.id for t in session.scalars(select(Target)) if t.last_scanned_at}
+    # The second pass must reach targets the first one never touched.
+    assert len(scanned - first) == 3

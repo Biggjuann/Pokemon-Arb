@@ -106,6 +106,15 @@ def scan(
     _setup_logging(verbose)
     init_db()
     run = _service(demo).run(max_targets=max_targets, listings_per_target=listings)
+    if run.status == "no_targets":
+        typer.secho(
+            "No search targets configured -- nothing to scan.\n"
+            "Load comps and build targets first:\n"
+            '  pokearb sync --price-guide   (or: pokearb sync -q "charizard")\n'
+            "  pokearb targets --per-set 25",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(code=1)
     color = typer.colors.GREEN if run.status == "ok" else typer.colors.RED
     typer.secho(
         f"scan {run.status}: {run.targets_scanned} targets, {run.listings_seen} listings, "

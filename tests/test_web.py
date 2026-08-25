@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from pokemon_arb.config import get_settings
 from pokemon_arb.db import get_sessionmaker
 from pokemon_arb.models import Deal
 from pokemon_arb.pipeline.scan import ScanService
@@ -186,3 +187,64 @@ def test_limit_is_clamped_not_rejected(client):
 def test_genuinely_invalid_numbers_are_still_rejected(client):
     """Blank is 'no filter'; garbage is still a client error."""
     assert client.get("/?status=all&max_cost=abc").status_code == 422
+
+
+# --- set-up flow -----------------------------------------------------------
+# A deployed instance has no shell, so the catalog has to be loadable from the
+# UI. Before this existed, a live deploy could not be brought into a working
+# state at all.
+
+
+@pytest.fixture
+def empty_client():
+    """A client with no products, targets or deals -- a fresh deploy."""
+    with TestClient(create_app()) as test_client:
+        yield test_client
+
+
+def test_fresh_deploy_explains_what_to_do(empty_client):
+    body = empty_client.get("/scans").text
+    assert "Set-up needed" in body
+    assert "No cards are being tracked yet" in body
+    assert 'action="/sync"' in body
+
+
+def test_setup_panel_disappears_once_populated(client):
+    assert "Set-up needed" not in client.get("/scans").text
+
+
+def test_scan_with_nothing_configured_is_not_reported_as_success(monkeypatch, tmp_path):
+    """With eBay credentials set there is no demo fallback, so an unpopulated
+    catalog yields a scan that succeeds and does nothing -- say so plainly."""
+    monkeypatch.setenv("EBAY_CLIENT_ID", "id")
+    monkeypatch.setenv("EBAY_CLIENT_SECRET", "secret")
+    get_settings.cache_clear()
+
+    with TestClient(create_app()) as live_client:
+        # No targets exist, so no eBay call is ever attempted.
+        live_client.post("/scan", data={}, follow_redirects=False)
+        body = live_client.get("/scans").text
+    assert "no targets" in body
+    assert "nothing to scan" in body
+    assert "Set-up needed" in body
+
+
+def test_sync_route_redirects(empty_client):
+    response = empty_client.post(
+        "/sync", data={"queries": "charizard", "per_set": "5"}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/scans"
+
+
+def test_sync_without_a_pricecharting_token_says_so(empty_client):
+    """The most likely live failure should name the missing variable."""
+    empty_client.post("/sync", data={"queries": "charizard"}, follow_redirects=False)
+    body = empty_client.get("/scans").text
+    assert "PRICECHARTING_TOKEN" in body
+
+
+def test_healthz_reports_the_running_job(empty_client):
+    payload = empty_client.get("/healthz").json()
+    assert payload["status"] == "ok"
+    assert "running_job" in payload

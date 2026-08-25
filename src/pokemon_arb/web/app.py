@@ -69,10 +69,6 @@ def _clamp_limit(limit: int | None, default: int) -> int:
     return min(max(limit or default, 1), MAX_LIMIT)
 
 
-_scan_lock = threading.Lock()
-_scan_state: dict[str, Any] = {"running": False, "last_error": None}
-
-
 def get_db() -> Session:
     factory = get_sessionmaker()
     session = factory()
@@ -82,31 +78,58 @@ def get_db() -> Session:
         session.close()
 
 
-def _run_scan_job(max_targets: int | None, demo: bool) -> None:
-    """Background scan. Only one at a time -- eBay call budget is shared."""
-    if not _scan_lock.acquire(blocking=False):
-        log.info("scan already running; ignoring trigger")
+# One background job at a time: scans and syncs touch the same tables, and the
+# eBay call budget is shared.
+_job_lock = threading.Lock()
+_job_state: dict[str, Any] = {"running": None, "last_error": None, "last_result": None}
+
+
+def _run_job(label: str, fn) -> None:
+    if not _job_lock.acquire(blocking=False):
+        log.info("job %r skipped, %r already running", label, _job_state["running"])
         return
     try:
-        _scan_state.update(running=True, last_error=None)
-        from ..pipeline.scan import ScanService
-        from ..sources.demo import DemoEbayClient, demo_products
-
-        settings = get_settings()
-        use_demo = demo or settings.demo_mode or not settings.has_ebay_credentials
-        service = ScanService(ebay_client=DemoEbayClient() if use_demo else None)
-        if use_demo:
-            with get_sessionmaker()() as session:
-                if not session.scalar(select(func.count()).select_from(Product)):
-                    service.sync_products(demo_products())
-                    service.build_targets()
-        service.run(max_targets=max_targets)
-    except Exception as exc:
-        log.exception("background scan failed")
-        _scan_state["last_error"] = f"{type(exc).__name__}: {exc}"
+        _job_state.update(running=label, last_error=None)
+        _job_state["last_result"] = fn()
+    except Exception as exc:  # surfaced in the UI
+        log.exception("background job %r failed", label)
+        _job_state["last_error"] = f"{type(exc).__name__}: {exc}"
     finally:
-        _scan_state["running"] = False
-        _scan_lock.release()
+        _job_state["running"] = None
+        _job_lock.release()
+
+
+def _scan_job(max_targets: int | None, demo: bool) -> str:
+    from ..pipeline.scan import ScanService
+    from ..sources.demo import DemoEbayClient, demo_products
+
+    settings = get_settings()
+    use_demo = demo or settings.demo_mode or not settings.has_ebay_credentials
+    service = ScanService(ebay_client=DemoEbayClient() if use_demo else None)
+    if use_demo:
+        with get_sessionmaker()() as session:
+            if not session.scalar(select(func.count()).select_from(Product)):
+                service.sync_products(demo_products())
+                service.build_targets()
+    run = service.run(max_targets=max_targets)
+    return (
+        f"scan {run.status}: {run.targets_scanned} targets, "
+        f"{run.listings_seen} listings, {run.deals_found} deals"
+    )
+
+
+def _sync_job(queries: list[str], per_set: int) -> str:
+    """Pull comps from PriceCharting, then rebuild the target list.
+
+    Both halves run together because comps without targets leave the app in
+    exactly the state that looks broken: a scan that succeeds and does nothing.
+    """
+    from ..pipeline.scan import ScanService
+
+    service = ScanService()
+    synced = service.sync_from_queries(queries) if queries else service.sync_from_price_guide()
+    targets = service.build_targets(per_set=per_set)
+    return f"synced {synced} cards, {targets} targets active"
 
 
 def _seed_demo_if_empty() -> None:
@@ -138,7 +161,7 @@ def _start_scheduler(interval_minutes: int) -> None:
         time.sleep(30)
         while True:
             try:
-                _run_scan_job(None, False)
+                _run_job("scan", lambda: _scan_job(None, False))
             except Exception:
                 log.exception("scheduled scan failed")
             time.sleep(interval_minutes * 60)
@@ -187,7 +210,7 @@ def create_app() -> FastAPI:
         try:
             with get_sessionmaker()() as session:
                 session.execute(select(1))
-            return JSONResponse({"status": "ok", "scan_running": _scan_state["running"]})
+            return JSONResponse({"status": "ok", "running_job": _job_state["running"]})
         except Exception as exc:
             return JSONResponse({"status": "degraded", "error": str(exc)}, status_code=503)
 
@@ -270,7 +293,7 @@ def create_app() -> FastAPI:
                     "limit": limit,
                 },
                 "last_scan": store.latest_scan(db),
-                "scan_state": _scan_state,
+                "scan_state": _job_state,
                 "risk_weights": RISK_WEIGHTS,
                 "freshness": {
                     "window_hours": display_window(settings).total_seconds() / 3600,
@@ -298,7 +321,7 @@ def create_app() -> FastAPI:
                     "card_name": deal.product.display_name,
                     "age": age_label(deal.listing),
                     "window_hours": display_window(settings).total_seconds() / 3600,
-                    "scan_state": _scan_state,
+                    "scan_state": _job_state,
                 },
                 status_code=409,
             )
@@ -350,7 +373,7 @@ def create_app() -> FastAPI:
                     "products": product_count,
                     "listings": listing_count,
                 },
-                "scan_state": _scan_state,
+                "scan_state": _job_state,
                 "settings": get_settings(),
             },
         )
@@ -361,7 +384,22 @@ def create_app() -> FastAPI:
         max_targets: int | None = Form(None),
         demo: bool = Form(False),
     ) -> RedirectResponse:
-        background.add_task(_run_scan_job, max_targets, demo)
+        background.add_task(_run_job, "scan", lambda: _scan_job(max_targets, demo))
+        return RedirectResponse("/scans", status_code=303)
+
+    @app.post("/sync")
+    def trigger_sync(
+        background: BackgroundTasks,
+        queries: str = Form(""),
+        per_set: int = Form(25),
+    ) -> RedirectResponse:
+        """Populate the catalog: PriceCharting comps, then targets.
+
+        With no queries this downloads the whole pokemon-cards price guide; a
+        comma or newline separated list narrows it to specific cards.
+        """
+        terms = [q.strip() for q in queries.replace(chr(10), ",").split(",") if q.strip()]
+        background.add_task(_run_job, "sync", lambda: _sync_job(terms, max(1, min(per_set, 200))))
         return RedirectResponse("/scans", status_code=303)
 
     # --- json api -----------------------------------------------------

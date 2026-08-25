@@ -166,7 +166,12 @@ class ScanService:
                     session.scalars(
                         select(Target)
                         .where(Target.enabled.is_(True))
-                        .order_by(Target.priority.desc(), Target.last_scanned_at.asc().nullsfirst())
+                        # Stalest first, value breaking ties. Ordering by value
+                        # first meant that with more targets than the call
+                        # budget allows, the same top slice was rescanned every
+                        # time and the rest never got scanned at all -- so their
+                        # listings sat permanently outside the freshness window.
+                        .order_by(Target.last_scanned_at.asc().nullsfirst(), Target.priority.desc())
                     )
                 )
                 if max_targets:
@@ -195,7 +200,9 @@ class ScanService:
 
             with self.session_factory() as session:
                 run = session.get(ScanRun, run_id)
-                run.status = "ok"
+                # A scan with nothing to scan is not a success -- it is the
+                # symptom of an unpopulated catalog, and saying "ok" hides that.
+                run.status = "ok" if targets else "no_targets"
                 run.finished_at = utcnow()
                 run.targets_scanned = stats.targets_scanned
                 run.listings_seen = stats.listings_seen

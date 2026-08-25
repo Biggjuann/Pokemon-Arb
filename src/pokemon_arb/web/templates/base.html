@@ -17,12 +17,16 @@
     </nav>
     <form method="post" action="/scan" class="scan-form">
       <button type="submit" {{ 'disabled' if scan_state and scan_state.running else '' }}>
-        {{ 'Scanning...' if scan_state and scan_state.running else 'Run scan' }}
+        {{ 'Busy...' if scan_state and scan_state.running else 'Run scan' }}
       </button>
     </form>
   </header>
-  {% if scan_state and scan_state.last_error %}
-    <div class="banner error">Last scan failed: {{ scan_state.last_error }}</div>
+  {% if scan_state and scan_state.running %}
+    <div class="banner info">Running {{ scan_state.running }}... reload for progress.</div>
+  {% elif scan_state and scan_state.last_error %}
+    <div class="banner error">Last job failed: {{ scan_state.last_error }}</div>
+  {% elif scan_state and scan_state.last_result %}
+    <div class="banner ok">{{ scan_state.last_result }}</div>
   {% endif %}
   <main>{% block content %}{% endblock %}</main>
 </body>
