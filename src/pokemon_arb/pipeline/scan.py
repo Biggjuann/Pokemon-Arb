@@ -117,7 +117,10 @@ class ScanService:
         count = 0
         with self.session_factory() as session:
             for pc_product in products:
-                if should_cancel is not None and count % 100 == 0 and should_cancel():
+                # Every row, not every hundredth accepted one: rows that are
+                # skipped never advanced `count`, so a guide full of sealed
+                # product could go a long way between cancel checks.
+                if should_cancel is not None and should_cancel():
                     log.info("sync cancelled after %s cards", count)
                     break
                 if not pc_product.pc_id or not pc_product.prices.get("ungraded_cents"):
@@ -135,7 +138,8 @@ class ScanService:
         self, category: str = "pokemon-cards", should_cancel: Callable[[], bool] | None = None
     ) -> int:
         return self.sync_products(
-            self.pricecharting.iter_price_guide(category), should_cancel=should_cancel
+            self.pricecharting.iter_price_guide(category, should_cancel=should_cancel),
+            should_cancel=should_cancel,
         )
 
     def sync_from_csv_text(self, text: str) -> int:
@@ -223,7 +227,7 @@ class ScanService:
                         )
                         break
                     try:
-                        self._scan_target(session, target, per_target, stats)
+                        self._scan_target(session, target, per_target, stats, should_cancel)
                     except EbayError as exc:
                         # Counted and reported, not just logged: a scan where
                         # every eBay call failed used to finish as "ok" with
@@ -299,7 +303,12 @@ class ScanService:
                 return run
 
     def _scan_target(
-        self, session: Session, target: Target, per_target: int, stats: ScanStats
+        self,
+        session: Session,
+        target: Target,
+        per_target: int,
+        stats: ScanStats,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:
         settings = self.settings
         product = target.product
@@ -333,6 +342,10 @@ class ScanService:
         stats.api_calls += self.ebay.call_count - before_calls
 
         for data in listings:
+            # A single target can return hundreds of listings; without this a
+            # cancel waits for all of them to be matched and priced.
+            if should_cancel is not None and should_cancel():
+                return
             stats.listings_seen += 1
             self._process_listing(session, data, product, stats)
 

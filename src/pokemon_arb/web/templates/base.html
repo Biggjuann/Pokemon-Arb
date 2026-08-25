@@ -23,11 +23,16 @@
     </form>
   </header>
   {% if scan_state and scan_state.running %}
-    <div class="banner info">
-      Running {{ scan_state.running }}... reload for progress.
-      <form method="post" action="/jobs/cancel" class="inline-scan">
-        <button type="submit" class="danger">Cancel</button>
-      </form>
+    <div class="banner {{ 'stale-note' if scan_state.cancelling else 'info' }}">
+      {% if scan_state.cancelling %}
+        Cancelling {{ scan_state.running }}... it stops at the next checkpoint,
+        keeping whatever it has already done. Reload to confirm.
+      {% else %}
+        Running {{ scan_state.running }}... reload for progress.
+        <form method="post" action="/jobs/cancel" class="inline-scan">
+          <button type="submit" class="danger">Cancel</button>
+        </form>
+      {% endif %}
     </div>
   {% elif scan_state and scan_state.last_error %}
     <div class="banner error">Last job failed: {{ scan_state.last_error }}</div>

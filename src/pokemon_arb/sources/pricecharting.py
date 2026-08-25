@@ -13,7 +13,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -157,18 +157,27 @@ class PriceChartingClient:
             return None
         return PCProduct.from_payload(payload, pennies=True)
 
-    def iter_price_guide(self, category: str = DEFAULT_CATEGORY) -> Iterator[PCProduct]:
-        """Stream the full CSV price guide for a category (subscriber feature)."""
+    def iter_price_guide(
+        self,
+        category: str = DEFAULT_CATEGORY,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Iterator[PCProduct]:
+        """Stream the full CSV price guide for a category (subscriber feature).
+
+        Genuinely streamed, row by row. An earlier version buffered the whole
+        response before yielding anything, which meant a cancel could not take
+        effect for the entire download -- the longest part of the job, and the
+        one most worth being able to stop.
+        """
         params = {"t": self._require_token(), "category": category}
         with self._client.stream(
             "GET", f"{BASE_URL}/price-guide/download-custom", params=params
         ) as response:
             response.raise_for_status()
-            buffer = io.StringIO()
-            for chunk in response.iter_text():
-                buffer.write(chunk)
-            buffer.seek(0)
-            for row in csv.DictReader(buffer):
+            for row in csv.DictReader(response.iter_lines()):
+                if should_cancel is not None and should_cancel():
+                    log.info("price guide download cancelled")
+                    return
                 product = PCProduct.from_payload(row, pennies=False)
                 if product.is_card:
                     yield product

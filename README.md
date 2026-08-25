@@ -211,7 +211,11 @@ are synced.
 - **Cancelling** — a running scan or sync can be stopped from the banner. It is
   cooperative, not a kill: an in-flight eBay request finishes and its listings
   are kept, and a cancelled sync keeps the cards it already committed, so a
-  partial catalog is still usable. Runs left behind by a killed process are
+  partial catalog is still usable. Checkpoints are between targets, between
+  listings within a target, and on every row of a price-guide download, so a
+  cancel lands in about the time of one HTTP request. The banner switches to
+  "Cancelling…" as soon as you click, since the stop happens at the next
+  checkpoint rather than instantly. Runs left behind by a killed process are
   closed out as `interrupted` on the next boot rather than showing as running
   forever.
 - **`/api/deals`** — JSON, for anything you want to build on top.

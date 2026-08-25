@@ -88,7 +88,12 @@ def get_db() -> Session:
 # eBay call budget is shared.
 _job_lock = threading.Lock()
 _job_cancel = threading.Event()
-_job_state: dict[str, Any] = {"running": None, "last_error": None, "last_result": None}
+_job_state: dict[str, Any] = {
+    "running": None,
+    "last_error": None,
+    "last_result": None,
+    "cancelling": False,
+}
 
 
 def _run_job(label: str, fn) -> None:
@@ -97,13 +102,14 @@ def _run_job(label: str, fn) -> None:
         return
     try:
         _job_cancel.clear()
-        _job_state.update(running=label, last_error=None)
+        _job_state.update(running=label, last_error=None, cancelling=False)
         _job_state["last_result"] = fn()
     except Exception as exc:  # surfaced in the UI
         log.exception("background job %r failed", label)
         _job_state["last_error"] = f"{type(exc).__name__}: {exc}"
     finally:
         _job_state["running"] = None
+        _job_state["cancelling"] = False
         _job_cancel.clear()
         _job_lock.release()
 
@@ -540,6 +546,11 @@ def create_app() -> FastAPI:
         its listings are kept, and a partial sync keeps what it committed.
         """
         _job_cancel.set()
+        # Surfaced right away: a cancel only takes effect at the next
+        # checkpoint, and a banner that still says "Running" reads as a
+        # button that did nothing.
+        if _job_state["running"]:
+            _job_state["cancelling"] = True
         return RedirectResponse("/scans", status_code=303)
 
     @app.post("/sync")

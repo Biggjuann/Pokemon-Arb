@@ -33,13 +33,16 @@ def test_cancel_stops_the_scan_early(service):
 
 def test_cancel_keeps_work_already_done(service):
     """Stopping mid-scan must not throw away targets already processed."""
-    calls = {"n": 0}
+    original = service._scan_target
+    completed = {"n": 0}
 
-    def cancel_after_two() -> bool:
-        calls["n"] += 1
-        return calls["n"] > 2
+    def counting(*args, **kwargs):
+        original(*args, **kwargs)
+        completed["n"] += 1
 
-    run = service.run(should_cancel=cancel_after_two)
+    service._scan_target = counting
+    run = service.run(should_cancel=lambda: completed["n"] >= 2)
+
     assert run.status == "cancelled"
     assert run.targets_scanned == 2
     assert run.listings_seen > 0
@@ -151,3 +154,112 @@ def test_cancel_endpoint_stops_a_job_in_flight():
     assert stopped.wait(timeout=5), "job did not observe the cancel flag"
     worker.join(timeout=5)
     assert app_module._job_state["running"] is None
+
+
+# --- cancelling during a price-guide download ------------------------------
+# The download is the longest part of a sync. It used to buffer the whole
+# response before yielding a row, so a cancel could not take effect until it
+# had finished -- the Cancel button did nothing for the entire download.
+
+
+def _guide_csv(rows: int) -> str:
+    header = (
+        "id,console-name,product-name,loose-price,cib-price,new-price,"
+        "graded-price,box-only-price,manual-only-price,sales-volume,release-date\n"
+    )
+    body = "".join(
+        f"{i},Pokemon Base Set,Card #{i},10.00,20.00,30.00,40.00,50.00,60.00,5,1999-01-09\n"
+        for i in range(rows)
+    )
+    return header + body
+
+
+def test_price_guide_download_is_streamed_not_buffered():
+    """The first row must arrive before the response body is exhausted.
+
+    Uses a chunked body and records how much was consumed at first yield --
+    the buffering version read all of it before yielding anything.
+    """
+    import httpx
+    import respx
+
+    from pokemon_arb.sources.pricecharting import PriceChartingClient
+
+    chunks = [line.encode() for line in _guide_csv(500).splitlines(keepends=True)]
+    consumed = {"n": 0}
+
+    def body():
+        for chunk in chunks:
+            consumed["n"] += 1
+            yield chunk
+
+    with respx.mock(base_url="https://www.pricecharting.com") as mock:
+        mock.get("/price-guide/download-custom").mock(
+            return_value=httpx.Response(200, content=body())
+        )
+        with PriceChartingClient("token") as client:
+            stream = client.iter_price_guide()
+            first = next(stream)
+            at_first_yield = consumed["n"]
+            stream.close()
+
+    assert first.name == "Card #0"
+    assert at_first_yield < len(chunks), (
+        f"whole body consumed ({at_first_yield}/{len(chunks)} chunks) before the first row"
+    )
+
+
+def test_price_guide_download_stops_when_cancelled():
+    import httpx
+    import respx
+
+    from pokemon_arb.sources.pricecharting import PriceChartingClient
+
+    seen = []
+    with respx.mock(base_url="https://www.pricecharting.com") as mock:
+        mock.get("/price-guide/download-custom").mock(
+            return_value=httpx.Response(200, text=_guide_csv(1000))
+        )
+        with PriceChartingClient("token") as client:
+            for product in client.iter_price_guide(should_cancel=lambda: len(seen) >= 10):
+                seen.append(product)
+    assert len(seen) == 10, "download kept going after the cancel"
+
+
+def test_sync_from_price_guide_stops_when_cancelled():
+    import httpx
+    import respx
+
+    from pokemon_arb.sources.pricecharting import PriceChartingClient
+
+    with respx.mock(base_url="https://www.pricecharting.com") as mock:
+        mock.get("/price-guide/download-custom").mock(
+            return_value=httpx.Response(200, text=_guide_csv(1000))
+        )
+        service = ScanService(pc_client=PriceChartingClient("token"))
+        synced = service.sync_from_price_guide(should_cancel=lambda: True)
+    assert synced == 0
+
+    from pokemon_arb.models import Product
+
+    with get_sessionmaker()() as session:
+        assert session.query(Product).count() == 0
+
+
+def test_sync_checks_cancel_on_every_row_not_every_hundredth():
+    """Rows that are skipped never advanced the old counter."""
+    from pokemon_arb.sources.pricecharting import PCProduct
+
+    calls = {"n": 0}
+
+    def should_cancel() -> bool:
+        calls["n"] += 1
+        return False
+
+    # Products with no ungraded price are skipped by sync_products.
+    skipped = [
+        PCProduct(pc_id=f"p{i}", name=f"Card #{i}", set_name="Set", prices={"ungraded_cents": None})
+        for i in range(50)
+    ]
+    ScanService(ebay_client=DemoEbayClient()).sync_products(skipped, should_cancel=should_cancel)
+    assert calls["n"] == 50
