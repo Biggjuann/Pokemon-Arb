@@ -196,3 +196,35 @@ def test_diagnostics_page_does_not_print_secrets(client, monkeypatch):
 
 def test_diagnostics_is_linked_from_every_page(client):
     assert "/diagnostics" in client.get("/scans").text
+
+
+# --- cross-keyset pairing --------------------------------------------------
+def test_app_id_and_cert_id_from_different_keysets_is_caught(monkeypatch):
+    """Each value is individually well formed; only the pairing is wrong."""
+    monkeypatch.setenv("EBAY_CLIENT_ID", PROD_ID)
+    monkeypatch.setenv("EBAY_CLIENT_SECRET", "SBX-1a2b3c4d5e6f-7a8b-9c0d-1e2f")
+    monkeypatch.setenv("EBAY_ENV", "production")
+    get_settings.cache_clear()
+    check = _named(check_ebay(get_settings(), live=False), "App ID and Cert ID are the same keyset")
+    assert check.ok is False
+    assert "different keysets" in check.fix
+
+
+def test_matched_keyset_pair_passes(monkeypatch):
+    monkeypatch.setenv("EBAY_CLIENT_ID", PROD_ID)
+    monkeypatch.setenv("EBAY_CLIENT_SECRET", PROD_SECRET)
+    monkeypatch.setenv("EBAY_ENV", "production")
+    get_settings.cache_clear()
+    report = check_ebay(get_settings(), live=False)
+    assert _named(report, "App ID and Cert ID are the same keyset").ok
+
+
+def test_auth_failure_offers_a_way_to_reproduce_outside_the_app():
+    with respx.mock(base_url="https://api.ebay.com") as mock:
+        mock.post("/identity/v1/oauth2/token").mock(
+            return_value=httpx.Response(401, json={"error": "invalid_client"})
+        )
+        check = _named(check_ebay(_settings(), live=True), "OAuth token")
+    assert "curl" in check.fix
+    assert "identity/v1/oauth2/token" in check.fix
+    assert "not enabled for production" in check.fix

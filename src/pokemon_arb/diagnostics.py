@@ -120,6 +120,24 @@ def inspect_credentials(settings: Settings, report: Report) -> None:
             "App ID has no -PRD-/-SBX- marker, cannot tell which keyset this is",
         )
 
+    # A Cert ID carries its own PRD-/SBX- prefix. App ID and Cert ID taken
+    # from different keysets is a mix-up the individual shape checks miss.
+    secret_env = None
+    if secret[:4].upper() in ("PRD-", "SBX-"):
+        secret_env = "production" if secret[:4].upper() == "PRD-" else "sandbox"
+    if secret_env and match:
+        app_env = "sandbox" if match.group(1).upper() == "SBX" else "production"
+        agree = secret_env == app_env
+        report.add(
+            "App ID and Cert ID are the same keyset",
+            agree,
+            f"App ID is {app_env}, Cert ID is {secret_env}",
+            ""
+            if agree
+            else "These are from different keysets. Copy both values from the same "
+            "application in the developer console.",
+        )
+
     # The classic: Dev ID pasted where the Cert ID belongs.
     looks_like_dev_id = bool(_BARE_UUID.match(secret))
     report.add(
@@ -161,8 +179,13 @@ def check_ebay(settings: Settings, *, live: bool = True) -> Report:
                 False,
                 str(exc)[:400],
                 "invalid_client means eBay rejected the App ID / Cert ID pair itself. "
-                "Confirm the keyset is enabled for production in the eBay developer "
-                "console, and that you copied the Cert ID (not the Dev ID).",
+                "If the shape checks above all pass, the values are well formed and "
+                "the problem is the keyset itself -- most often it exists in the "
+                "console but is not enabled for production. Reproduce it outside "
+                "this app to confirm: curl -X POST "
+                f"{settings.ebay_api_base}/identity/v1/oauth2/token "
+                "-u 'APP_ID:CERT_ID' -d "
+                "'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope'",
             )
             return report
         report.add("OAuth token", True, "eBay issued an application access token")
