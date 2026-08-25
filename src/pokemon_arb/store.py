@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -137,81 +137,6 @@ def upsert_target(
         # resurrect targets the user turned off.
     session.flush()
     return target
-
-
-def add_custom_target(session: Session, query: str) -> Target | None:
-    """A free-text search the user typed, not derived from a comp."""
-    query = query.strip()
-    if not query:
-        return None
-    existing = session.scalar(
-        select(Target).where(Target.query == query, Target.product_id.is_(None))
-    )
-    if existing is not None:
-        existing.enabled = True
-        session.flush()
-        return existing
-    target = Target(query=query, product_id=None, set_name=None, priority=0, enabled=True)
-    session.add(target)
-    session.flush()
-    return target
-
-
-def set_target_enabled(session: Session, target_id: int, enabled: bool) -> Target | None:
-    target = session.get(Target, target_id)
-    if target is not None:
-        target.enabled = enabled
-    return target
-
-
-def delete_target(session: Session, target_id: int) -> bool:
-    target = session.get(Target, target_id)
-    if target is None:
-        return False
-    session.delete(target)
-    return True
-
-
-def bulk_set_enabled(session: Session, set_name: str, enabled: bool) -> int:
-    targets = list(session.scalars(select(Target).where(Target.set_name == set_name)))
-    for target in targets:
-        target.enabled = enabled
-    return len(targets)
-
-
-def list_targets(
-    session: Session,
-    *,
-    search: str | None = None,
-    set_name: str | None = None,
-    enabled: bool | None = None,
-    limit: int = 200,
-) -> list[Target]:
-    stmt = select(Target)
-    if search:
-        stmt = stmt.where(Target.query.ilike(f"%{search.strip()}%"))
-    if set_name:
-        stmt = stmt.where(Target.set_name == set_name)
-    if enabled is not None:
-        stmt = stmt.where(Target.enabled.is_(enabled))
-    stmt = stmt.order_by(Target.enabled.desc(), Target.priority.desc()).limit(limit)
-    return list(session.scalars(stmt))
-
-
-def target_set_summary(session: Session) -> list[dict[str, Any]]:
-    """Per-set target counts, for bulk enable/disable."""
-    rows = session.execute(
-        select(
-            Target.set_name,
-            func.count(),
-            func.sum(func.cast(Target.enabled, Integer)),
-        ).group_by(Target.set_name)
-    ).all()
-    summary = [
-        {"set_name": name or "(custom searches)", "total": total, "enabled": int(on or 0)}
-        for name, total, on in rows
-    ]
-    return sorted(summary, key=lambda row: row["set_name"])
 
 
 # Sensible starting exclusions: things that are not a single English card but
@@ -355,6 +280,29 @@ def reap_interrupted_runs(session: Session) -> int:
         run.finished_at = utcnow()
         run.error = "process restarted while this scan was running"
     return len(orphaned)
+
+
+def clear_scan_history(session: Session) -> int:
+    """Delete scan records. Deals and listings are left alone."""
+    runs = list(session.scalars(select(ScanRun)))
+    for run in runs:
+        session.delete(run)
+    return len(runs)
+
+
+def reset_findings(session: Session) -> dict[str, int]:
+    """Drop everything a scan produced, keeping what it was produced from.
+
+    The catalog, targets and keywords survive: they cost API calls and manual
+    setup to rebuild, and none of them is what goes stale.
+    """
+    counts = {}
+    for label, model in (("deals", Deal), ("listings", Listing), ("scans", ScanRun)):
+        rows = list(session.scalars(select(model)))
+        for row in rows:
+            session.delete(row)
+        counts[label] = len(rows)
+    return counts
 
 
 def latest_scan(session: Session) -> ScanRun | None:

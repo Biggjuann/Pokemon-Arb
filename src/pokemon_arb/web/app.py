@@ -127,15 +127,6 @@ def _scan_job(max_targets: int | None, demo: bool) -> str:
     )
 
 
-def _rebuild_targets_job(per_set: int, sets: list[str] | None) -> str:
-    """Rebuild the target list from comps already synced -- no API calls."""
-    from ..pipeline.scan import ScanService
-
-    count = ScanService().build_targets(per_set=per_set, sets=sets)
-    scope = f" in {len(sets)} set(s)" if sets else ""
-    return f"{count} targets active{scope} (top {per_set} per set)"
-
-
 def _sync_job(queries: list[str], per_set: int) -> str:
     """Pull comps from PriceCharting, then rebuild the target list.
 
@@ -401,8 +392,45 @@ def create_app() -> FastAPI:
                 },
                 "scan_state": _job_state,
                 "settings": get_settings(),
+                "keywords": store.list_keywords(db),
             },
         )
+
+    @app.post("/scans/clear")
+    def clear_scans(confirm: str = Form(""), db: Session = Depends(get_db)) -> RedirectResponse:
+        """Delete scan history only. Deals and listings are untouched."""
+        if confirm != "yes":
+            raise HTTPException(status_code=400, detail="confirmation required")
+        removed = store.clear_scan_history(db)
+        db.commit()
+        _job_state["last_result"] = f"cleared {removed} scan record(s)"
+        return RedirectResponse("/scans", status_code=303)
+
+    @app.post("/scans/reset")
+    def reset_and_scan(
+        background: BackgroundTasks,
+        confirm: str = Form(""),
+        rescan: bool = Form(False),
+        db: Session = Depends(get_db),
+    ) -> RedirectResponse:
+        """Clear every finding and optionally start over.
+
+        Deliberately keeps the card catalog, targets and keywords: those cost
+        API calls and manual setup to rebuild, and none of them are what goes
+        stale. What gets dropped is everything derived from a scan.
+        """
+        if confirm != "yes":
+            raise HTTPException(status_code=400, detail="confirmation required")
+        counts = store.reset_findings(db)
+        db.commit()
+        summary = (
+            f"cleared {counts['deals']} deals, {counts['listings']} listings, "
+            f"{counts['scans']} scan records"
+        )
+        _job_state["last_result"] = summary
+        if rescan:
+            background.add_task(_run_job, "scan", lambda: _scan_job(None, False))
+        return RedirectResponse("/scans", status_code=303)
 
     @app.post("/scan")
     def trigger_scan(
@@ -454,121 +482,19 @@ def create_app() -> FastAPI:
             log.exception("failed to purge data for an account deletion notice")
         return Response(status_code=204)
 
-    # --- targets ------------------------------------------------------
-    @app.get("/targets", response_class=HTMLResponse)
-    def targets_page(
-        request: Request,
-        db: Session = Depends(get_db),
-        search: str | None = Query(None),
-        set_name: str | None = Query(None),
-        show: str = Query("all"),
-        limit: BlankableInt = None,
-    ) -> HTMLResponse:
-        enabled = {"enabled": True, "disabled": False}.get(show)
-        targets = store.list_targets(
-            db,
-            search=search,
-            set_name=set_name or None,
-            enabled=enabled,
-            limit=_clamp_limit(limit, 200),
-        )
-        return templates.TemplateResponse(
-            request,
-            "targets.html",
-            {
-                "targets": targets,
-                "sets": store.target_set_summary(db),
-                "filters": {
-                    "search": search or "",
-                    "set_name": set_name or "",
-                    "show": show,
-                },
-                "totals": {
-                    "all": db.scalar(select(func.count()).select_from(Target)),
-                    "enabled": db.scalar(
-                        select(func.count()).select_from(Target).where(Target.enabled.is_(True))
-                    ),
-                },
-                "default_per_set": get_settings().scan_top_cards_per_set,
-                "keywords": store.list_keywords(db),
-                "scan_state": _job_state,
-                "age_label": age_label,
-            },
-        )
-
-    @app.post("/targets/add")
-    def add_target(query: str = Form(...), db: Session = Depends(get_db)) -> RedirectResponse:
-        """A free-text search, e.g. 'charizard vmax alt art'.
-
-        It carries no comp, so a listing it finds is valued against whatever
-        catalogued card the matcher can tie it to by card number.
-        """
-        for term in (q.strip() for q in query.replace(chr(10), ",").split(",")):
-            if term:
-                store.add_custom_target(db, term)
-        db.commit()
-        return RedirectResponse("/targets", status_code=303)
-
-    @app.post("/targets/{target_id}/toggle")
-    def toggle_target(
-        target_id: int,
-        enabled: bool = Form(...),
-        redirect_to: str = Form("/targets"),
-        db: Session = Depends(get_db),
-    ) -> RedirectResponse:
-        if store.set_target_enabled(db, target_id, enabled) is None:
-            raise HTTPException(status_code=404, detail="target not found")
-        db.commit()
-        return RedirectResponse(redirect_to, status_code=303)
-
-    @app.post("/targets/{target_id}/delete")
-    def remove_target(
-        target_id: int,
-        redirect_to: str = Form("/targets"),
-        db: Session = Depends(get_db),
-    ) -> RedirectResponse:
-        if not store.delete_target(db, target_id):
-            raise HTTPException(status_code=404, detail="target not found")
-        db.commit()
-        return RedirectResponse(redirect_to, status_code=303)
-
-    @app.post("/targets/bulk")
-    def bulk_targets(
-        set_name: str = Form(...),
-        enabled: bool = Form(...),
-        db: Session = Depends(get_db),
-    ) -> RedirectResponse:
-        store.bulk_set_enabled(db, set_name, enabled)
-        db.commit()
-        return RedirectResponse("/targets", status_code=303)
-
-    @app.post("/targets/rebuild")
-    def rebuild_targets(
-        background: BackgroundTasks,
-        per_set: int = Form(25),
-        sets: list[str] = Form(default=[]),
-    ) -> RedirectResponse:
-        chosen = [s for s in sets if s.strip()] or None
-        background.add_task(
-            _run_job,
-            "rebuild targets",
-            lambda: _rebuild_targets_job(max(1, min(per_set, 200)), chosen),
-        )
-        return RedirectResponse("/targets", status_code=303)
-
     # --- negative keywords --------------------------------------------
     @app.post("/keywords/add")
     def add_keyword(term: str = Form(...), db: Session = Depends(get_db)) -> RedirectResponse:
         for part in term.replace(chr(10), ",").split(","):
             store.add_keyword(db, part)
         db.commit()
-        return RedirectResponse("/targets", status_code=303)
+        return RedirectResponse("/scans", status_code=303)
 
     @app.post("/keywords/recommended")
     def add_recommended(db: Session = Depends(get_db)) -> RedirectResponse:
         store.add_recommended_keywords(db)
         db.commit()
-        return RedirectResponse("/targets", status_code=303)
+        return RedirectResponse("/scans", status_code=303)
 
     @app.post("/keywords/{keyword_id}/toggle")
     def toggle_keyword(
@@ -577,14 +503,14 @@ def create_app() -> FastAPI:
         if store.set_keyword_enabled(db, keyword_id, enabled) is None:
             raise HTTPException(status_code=404, detail="keyword not found")
         db.commit()
-        return RedirectResponse("/targets", status_code=303)
+        return RedirectResponse("/scans", status_code=303)
 
     @app.post("/keywords/{keyword_id}/delete")
     def remove_keyword(keyword_id: int, db: Session = Depends(get_db)) -> RedirectResponse:
         if not store.delete_keyword(db, keyword_id):
             raise HTTPException(status_code=404, detail="keyword not found")
         db.commit()
-        return RedirectResponse("/targets", status_code=303)
+        return RedirectResponse("/scans", status_code=303)
 
     @app.get("/diagnostics", response_class=HTMLResponse)
     def diagnostics(request: Request, live: bool = Query(True)) -> HTMLResponse:

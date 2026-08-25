@@ -1,4 +1,4 @@
-"""Controlling what gets scanned: targets and negative keywords."""
+"""Negative keywords and scans-page housekeeping."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from pokemon_arb import store
 from pokemon_arb.db import get_sessionmaker
-from pokemon_arb.models import ExcludedKeyword, Listing, Target
+from pokemon_arb.models import Deal, ExcludedKeyword, Listing, Product, ScanRun, Target
 from pokemon_arb.pipeline.scan import ScanService
 from pokemon_arb.sources.demo import DemoEbayClient, demo_products
 from pokemon_arb.web.app import create_app
@@ -26,86 +26,6 @@ def seeded():
 def client(seeded):
     with TestClient(create_app()) as test_client:
         yield test_client
-
-
-# --- targets ---------------------------------------------------------------
-def test_targets_page_lists_them(client):
-    body = client.get("/targets").text
-    assert "Charizard" in body or "charizard" in body
-    assert "Negative keywords" in body
-
-
-def test_disable_a_target_and_it_is_not_scanned(client, seeded):
-    with get_sessionmaker()() as session:
-        target = session.scalars(select(Target).order_by(Target.priority.desc())).first()
-        target_id, query = target.id, target.query
-
-    client.post(f"/targets/{target_id}/toggle", data={"enabled": "false"}, follow_redirects=False)
-    ScanService(ebay_client=DemoEbayClient(seed=11)).run()
-
-    with get_sessionmaker()() as session:
-        disabled = session.get(Target, target_id)
-        assert disabled.enabled is False
-        assert disabled.last_scanned_at is None, f"{query} was scanned while disabled"
-
-
-def test_rebuilding_targets_does_not_resurrect_disabled_ones(client, seeded):
-    """Turning a target off has to survive a rebuild."""
-    with get_sessionmaker()() as session:
-        target_id = session.scalars(select(Target)).first().id
-    client.post(f"/targets/{target_id}/toggle", data={"enabled": "false"}, follow_redirects=False)
-
-    seeded.build_targets(per_set=5)
-
-    with get_sessionmaker()() as session:
-        assert session.get(Target, target_id).enabled is False
-
-
-def test_add_custom_search_targets(client):
-    response = client.post(
-        "/targets/add",
-        data={"query": "charizard vmax alt art, umbreon gold star"},
-        follow_redirects=False,
-    )
-    assert response.status_code == 303
-    with get_sessionmaker()() as session:
-        customs = list(session.scalars(select(Target).where(Target.product_id.is_(None))))
-        assert {t.query for t in customs} == {"charizard vmax alt art", "umbreon gold star"}
-        assert all(t.enabled for t in customs)
-
-
-def test_adding_the_same_custom_target_twice_is_idempotent(client):
-    for _ in range(2):
-        client.post("/targets/add", data={"query": "moonbreon"}, follow_redirects=False)
-    with get_sessionmaker()() as session:
-        assert len(list(session.scalars(select(Target).where(Target.query == "moonbreon")))) == 1
-
-
-def test_delete_a_target(client):
-    with get_sessionmaker()() as session:
-        target_id = session.scalars(select(Target)).first().id
-    client.post(f"/targets/{target_id}/delete", follow_redirects=False)
-    with get_sessionmaker()() as session:
-        assert session.get(Target, target_id) is None
-
-
-def test_bulk_disable_a_whole_set(client):
-    client.post(
-        "/targets/bulk",
-        data={"set_name": "Pokemon Base Set", "enabled": "false"},
-        follow_redirects=False,
-    )
-    with get_sessionmaker()() as session:
-        base = session.scalars(select(Target).where(Target.set_name == "Pokemon Base Set"))
-        assert all(not t.enabled for t in base)
-        others = session.scalars(select(Target).where(Target.set_name != "Pokemon Base Set"))
-        assert any(t.enabled for t in others)
-
-
-def test_target_filters(client):
-    assert client.get("/targets?search=charizard").status_code == 200
-    assert client.get("/targets?show=disabled").status_code == 200
-    assert client.get("/targets?set_name=Pokemon+Base+Set").status_code == 200
 
 
 # --- negative keywords -----------------------------------------------------
@@ -184,3 +104,94 @@ def test_blank_keyword_is_ignored():
     with get_sessionmaker()() as session:
         assert store.add_keyword(session, "   ") is None
         assert store.list_keywords(session) == []
+
+
+# --- the targets page is gone ---------------------------------------------
+def test_targets_page_no_longer_exists(client):
+    assert client.get("/targets").status_code == 404
+
+
+def test_keywords_live_on_the_scans_page(client):
+    body = client.get("/scans").text
+    assert "Negative keywords" in body
+    assert 'action="/keywords/add"' in body
+
+
+# --- clear scan history ----------------------------------------------------
+def test_clear_scan_history_keeps_findings(client, seeded):
+    seeded.run()
+    with get_sessionmaker()() as session:
+        assert session.query(ScanRun).count() > 0
+        deals_before = session.query(Deal).count()
+        listings_before = session.query(Listing).count()
+        assert deals_before > 0
+
+    response = client.post("/scans/clear", data={"confirm": "yes"}, follow_redirects=False)
+    assert response.status_code == 303
+
+    with get_sessionmaker()() as session:
+        assert session.query(ScanRun).count() == 0
+        assert session.query(Deal).count() == deals_before
+        assert session.query(Listing).count() == listings_before
+
+
+def test_clear_requires_confirmation(client, seeded):
+    seeded.run()
+    assert client.post("/scans/clear", data={}, follow_redirects=False).status_code == 400
+    with get_sessionmaker()() as session:
+        assert session.query(ScanRun).count() > 0
+
+
+# --- start from scratch ----------------------------------------------------
+def test_reset_clears_findings_but_keeps_the_catalog(client, seeded):
+    seeded.run()
+    with get_sessionmaker()() as session:
+        products = session.query(Product).count()
+        targets = session.query(Target).count()
+        assert session.query(Deal).count() > 0
+
+    response = client.post("/scans/reset", data={"confirm": "yes"}, follow_redirects=False)
+    assert response.status_code == 303
+
+    with get_sessionmaker()() as session:
+        assert session.query(Deal).count() == 0
+        assert session.query(Listing).count() == 0
+        # Rescan is off in this request, so only the reset record remains.
+        assert session.query(ScanRun).count() == 0
+        # The expensive things survive.
+        assert session.query(Product).count() == products
+        assert session.query(Target).count() == targets
+
+
+def test_reset_keeps_keywords(client, seeded):
+    client.post("/keywords/add", data={"term": "fan art"}, follow_redirects=False)
+    seeded.run()
+    client.post("/scans/reset", data={"confirm": "yes"}, follow_redirects=False)
+    with get_sessionmaker()() as session:
+        assert {k.term for k in store.list_keywords(session)} == {"fan art"}
+
+
+def test_reset_requires_confirmation(client, seeded):
+    seeded.run()
+    assert client.post("/scans/reset", data={}, follow_redirects=False).status_code == 400
+    with get_sessionmaker()() as session:
+        assert session.query(Deal).count() > 0
+
+
+def test_reset_can_rescan_immediately(client, seeded):
+    seeded.run()
+    response = client.post(
+        "/scans/reset", data={"confirm": "yes", "rescan": "true"}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    # The background rescan runs before the test client returns.
+    with get_sessionmaker()() as session:
+        assert session.query(ScanRun).count() == 1
+        assert session.query(Deal).count() > 0
+
+
+def test_reset_on_an_empty_database_is_harmless(client):
+    assert (
+        client.post("/scans/reset", data={"confirm": "yes"}, follow_redirects=False).status_code
+        == 303
+    )

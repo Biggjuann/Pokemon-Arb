@@ -42,6 +42,72 @@
   </section>
 {% endif %}
 
+<section class="panel">
+  <h2>Negative keywords</h2>
+  <p class="sub">A listing whose title contains any enabled term is dropped before it
+    is stored or valued. Case insensitive, matched as a substring. Proxies, lots,
+    non-English prints and graded slabs are already rejected without needing a
+    keyword &mdash; use this for what your own searches keep dragging in.</p>
+
+  <form method="post" action="/keywords/add" class="setup-form">
+    <label>Terms to exclude
+      <input type="text" name="term" required placeholder="fan art, acrylic, keychain">
+    </label>
+    <button type="submit">Add</button>
+  </form>
+
+  {% if not keywords %}
+    <form method="post" action="/keywords/recommended" class="setup-form">
+      <button type="submit">Add recommended starter list</button>
+    </form>
+  {% else %}
+    <ul class="keywords">
+      {% for keyword in keywords %}
+        <li class="keyword {{ '' if keyword.enabled else 'off' }}">
+          <form method="post" action="/keywords/{{ keyword.id }}/toggle">
+            <input type="hidden" name="enabled" value="{{ 'false' if keyword.enabled else 'true' }}">
+            <button type="submit" title="{{ 'Disable' if keyword.enabled else 'Enable' }}">
+              {{ keyword.term }}{% if keyword.hits %} <span class="hits">{{ keyword.hits }}</span>{% endif %}
+            </button>
+          </form>
+          <form method="post" action="/keywords/{{ keyword.id }}/delete">
+            <button type="submit" class="x" title="Delete">&#10005;</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+    <p class="sub">The number is how many listings each term has excluded &mdash; a term
+      with a big count is doing work; one stuck at zero may be misspelled.</p>
+  {% endif %}
+</section>
+
+<section class="panel danger-zone">
+  <h2>Housekeeping</h2>
+  <div class="panels two-up">
+    <div>
+      <h3>Clear scan history</h3>
+      <p class="sub">Removes the run records below. Deals and listings are untouched.</p>
+      <form method="post" action="/scans/clear" class="setup-form">
+        <label class="check"><input type="checkbox" name="confirm" value="yes" required> I'm sure</label>
+        <button type="submit">Clear history</button>
+      </form>
+    </div>
+    <div>
+      <h3>Start from scratch</h3>
+      <p class="sub">Deletes every deal, listing and run record, then optionally scans
+        again. Keeps the {{ counts.products }} cards and {{ counts.targets }} targets
+        &mdash; those cost API calls to rebuild and are not what goes stale.</p>
+      <form method="post" action="/scans/reset" class="setup-form">
+        <label class="check"><input type="checkbox" name="confirm" value="yes" required> I'm sure</label>
+        <label class="check"><input type="checkbox" name="rescan" value="true" checked> scan afterwards</label>
+        <button type="submit" class="danger" {{ 'disabled' if scan_state and scan_state.running }}>
+          Reset and rescan
+        </button>
+      </form>
+    </div>
+  </div>
+</section>
+
 <table class="deals">
   <thead><tr><th>Started</th><th>Status</th><th class="num">Targets</th><th class="num">Listings</th>
     <th class="num">New</th><th class="num">Deals</th><th class="num">API calls</th><th class="num">Duration</th><th>Notes</th></tr></thead>

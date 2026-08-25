@@ -187,3 +187,8 @@ table.deals.compact td, table.deals.compact th { padding: 7px 12px; }
 .keyword button.x:hover { color: var(--bad); }
 .keyword.off button { background: var(--panel-2); color: var(--muted); text-decoration: line-through; }
 .keyword .hits { opacity: .65; font-size: 10.5px; }
+
+/* housekeeping */
+.danger-zone { border-color: #4a2323; }
+.danger-zone h3 { margin-top: 0; }
+.danger-zone .panels { gap: 24px; }
