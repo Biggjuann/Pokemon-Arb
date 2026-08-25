@@ -167,5 +167,20 @@ def deactivate_stale_listings(session: Session, older_than: dt.timedelta) -> int
     return len(stale)
 
 
+def reap_interrupted_runs(session: Session) -> int:
+    """Close out scan rows left at "running" by a process that died.
+
+    Job state lives in memory, so at startup nothing can legitimately still be
+    running -- any such row is from a restart, redeploy or OOM kill, and would
+    otherwise show as an in-progress scan forever.
+    """
+    orphaned = list(session.scalars(select(ScanRun).where(ScanRun.status == "running")))
+    for run in orphaned:
+        run.status = "interrupted"
+        run.finished_at = utcnow()
+        run.error = "process restarted while this scan was running"
+    return len(orphaned)
+
+
 def latest_scan(session: Session) -> ScanRun | None:
     return session.scalar(select(ScanRun).order_by(ScanRun.started_at.desc()).limit(1))

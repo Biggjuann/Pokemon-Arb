@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -97,11 +98,19 @@ class ScanService:
         return self._pc
 
     # --- comps --------------------------------------------------------
-    def sync_products(self, products) -> int:
-        """Persist PCProduct records and snapshot their prices."""
+    def sync_products(self, products, should_cancel: Callable[[], bool] | None = None) -> int:
+        """Persist PCProduct records and snapshot their prices.
+
+        Cancellable between rows: a full price-guide sync is long enough that
+        being unable to stop it is a real problem. Whatever was committed
+        before the cancel is kept -- a partial catalog beats none.
+        """
         count = 0
         with self.session_factory() as session:
             for pc_product in products:
+                if should_cancel is not None and count % 100 == 0 and should_cancel():
+                    log.info("sync cancelled after %s cards", count)
+                    break
                 if not pc_product.pc_id or not pc_product.prices.get("ungraded_cents"):
                     continue
                 product, _created = store.upsert_product(session, pc_product.to_model_kwargs())
@@ -113,17 +122,25 @@ class ScanService:
             session.commit()
         return count
 
-    def sync_from_price_guide(self, category: str = "pokemon-cards") -> int:
-        return self.sync_products(self.pricecharting.iter_price_guide(category))
+    def sync_from_price_guide(
+        self, category: str = "pokemon-cards", should_cancel: Callable[[], bool] | None = None
+    ) -> int:
+        return self.sync_products(
+            self.pricecharting.iter_price_guide(category), should_cancel=should_cancel
+        )
 
     def sync_from_csv_text(self, text: str) -> int:
         return self.sync_products(PriceChartingClient.parse_price_guide_csv(text))
 
-    def sync_from_queries(self, queries: list[str]) -> int:
+    def sync_from_queries(
+        self, queries: list[str], should_cancel: Callable[[], bool] | None = None
+    ) -> int:
         found = []
         for query in queries:
+            if should_cancel is not None and should_cancel():
+                break
             found.extend(self.pricecharting.search_products(query))
-        return self.sync_products(found)
+        return self.sync_products(found, should_cancel=should_cancel)
 
     # --- targets ------------------------------------------------------
     def build_targets(self, per_set: int | None = None, sets: list[str] | None = None) -> int:
@@ -148,7 +165,10 @@ class ScanService:
 
     # --- scan ---------------------------------------------------------
     def run(
-        self, max_targets: int | None = None, listings_per_target: int | None = None
+        self,
+        max_targets: int | None = None,
+        listings_per_target: int | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> ScanRun:
         settings = self.settings
         per_target = listings_per_target or settings.scan_listings_per_target
@@ -177,7 +197,14 @@ class ScanService:
                 if max_targets:
                     targets = targets[:max_targets]
 
+                cancelled = False
                 for target in targets:
+                    # Checked between targets, so an in-flight eBay request is
+                    # allowed to finish and its listings are kept.
+                    if should_cancel is not None and should_cancel():
+                        log.info("scan cancelled after %s targets", stats.targets_scanned)
+                        cancelled = True
+                        break
                     if stats.api_calls >= settings.ebay_max_calls_per_scan:
                         log.warning(
                             "eBay call budget exhausted after %s targets", stats.targets_scanned
@@ -202,7 +229,10 @@ class ScanService:
                 run = session.get(ScanRun, run_id)
                 # A scan with nothing to scan is not a success -- it is the
                 # symptom of an unpopulated catalog, and saying "ok" hides that.
-                run.status = "ok" if targets else "no_targets"
+                if cancelled:
+                    run.status = "cancelled"
+                else:
+                    run.status = "ok" if targets else "no_targets"
                 run.finished_at = utcnow()
                 run.targets_scanned = stats.targets_scanned
                 run.listings_seen = stats.listings_seen
@@ -216,6 +246,16 @@ class ScanService:
                 }
                 session.commit()
                 return run
+        except KeyboardInterrupt:
+            # Ctrl-C must not leave the row stuck at "running" either.
+            with self.session_factory() as session:
+                run = session.get(ScanRun, run_id)
+                run.status = "cancelled"
+                run.finished_at = utcnow()
+                run.targets_scanned = stats.targets_scanned
+                run.api_calls = stats.api_calls
+                session.commit()
+            raise
         except Exception as exc:
             log.exception("scan failed")
             with self.session_factory() as session:

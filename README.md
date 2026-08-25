@@ -156,7 +156,14 @@ are synced.
   comp to profit, why the matcher believes it's that card, the comp ladder
   across grades, and every risk flag with its explanation.
 - **`/scans`** — run history, API call usage, and how many listings were rejected
-  versus merely under threshold.
+  versus merely under threshold. Also where you populate the catalog on a fresh
+  deploy, since there is no shell on a hosted instance.
+- **Cancelling** — a running scan or sync can be stopped from the banner. It is
+  cooperative, not a kill: an in-flight eBay request finishes and its listings
+  are kept, and a cancelled sync keeps the cards it already committed, so a
+  partial catalog is still usable. Runs left behind by a killed process are
+  closed out as `interrupted` on the next boot rather than showing as running
+  forever.
 - **`/api/deals`** — JSON, for anything you want to build on top.
   Swagger at `/api/docs`.
 

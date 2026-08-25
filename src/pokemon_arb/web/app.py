@@ -81,6 +81,7 @@ def get_db() -> Session:
 # One background job at a time: scans and syncs touch the same tables, and the
 # eBay call budget is shared.
 _job_lock = threading.Lock()
+_job_cancel = threading.Event()
 _job_state: dict[str, Any] = {"running": None, "last_error": None, "last_result": None}
 
 
@@ -89,6 +90,7 @@ def _run_job(label: str, fn) -> None:
         log.info("job %r skipped, %r already running", label, _job_state["running"])
         return
     try:
+        _job_cancel.clear()
         _job_state.update(running=label, last_error=None)
         _job_state["last_result"] = fn()
     except Exception as exc:  # surfaced in the UI
@@ -96,6 +98,7 @@ def _run_job(label: str, fn) -> None:
         _job_state["last_error"] = f"{type(exc).__name__}: {exc}"
     finally:
         _job_state["running"] = None
+        _job_cancel.clear()
         _job_lock.release()
 
 
@@ -111,7 +114,7 @@ def _scan_job(max_targets: int | None, demo: bool) -> str:
             if not session.scalar(select(func.count()).select_from(Product)):
                 service.sync_products(demo_products())
                 service.build_targets()
-    run = service.run(max_targets=max_targets)
+    run = service.run(max_targets=max_targets, should_cancel=_job_cancel.is_set)
     return (
         f"scan {run.status}: {run.targets_scanned} targets, "
         f"{run.listings_seen} listings, {run.deals_found} deals"
@@ -175,6 +178,14 @@ def _start_scheduler(interval_minutes: int) -> None:
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     init_db()
+    try:
+        with get_sessionmaker()() as session:
+            reaped = store.reap_interrupted_runs(session)
+            session.commit()
+        if reaped:
+            log.warning("closed %s scan run(s) orphaned by a restart", reaped)
+    except Exception:  # never block boot on housekeeping
+        log.exception("could not reap interrupted scan runs")
     if settings.seed_demo_on_startup or settings.demo_mode:
         try:
             _seed_demo_if_empty()
@@ -385,6 +396,16 @@ def create_app() -> FastAPI:
         demo: bool = Form(False),
     ) -> RedirectResponse:
         background.add_task(_run_job, "scan", lambda: _scan_job(max_targets, demo))
+        return RedirectResponse("/scans", status_code=303)
+
+    @app.post("/jobs/cancel")
+    def cancel_job() -> RedirectResponse:
+        """Ask the running job to stop at its next checkpoint.
+
+        Cooperative rather than a kill: an in-flight eBay request finishes and
+        its listings are kept, and a partial sync keeps what it committed.
+        """
+        _job_cancel.set()
         return RedirectResponse("/scans", status_code=303)
 
     @app.post("/sync")

@@ -154,3 +154,8 @@ table.math .note { color: var(--muted); font-size: 11.5px; text-align: right; }
   border-radius: 6px; padding: 7px 9px; font-size: 13px;
 }
 .setup-form input[name="queries"] { min-width: 380px; }
+
+.banner.info { display: flex; align-items: center; gap: 14px; }
+button.danger { background: var(--bad); }
+.pill.cancelled { background: #33290f; color: var(--warn); }
+.pill.interrupted { background: #3d1d1d; color: var(--bad); }
