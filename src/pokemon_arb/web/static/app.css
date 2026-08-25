@@ -173,3 +173,17 @@ button.danger { background: var(--bad); }
 .check.skip .mark { color: var(--muted); }
 .check .detail { color: var(--muted); font-size: 12.5px; margin-top: 3px; word-break: break-word; }
 .check .fix { color: var(--warn); font-size: 12.5px; margin-top: 5px; }
+
+/* targets */
+.panels.two-up { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); margin-bottom: 18px; }
+table.deals.compact td, table.deals.compact th { padding: 7px 12px; }
+.panel .sub em { color: var(--text); font-style: normal; }
+
+/* negative keywords */
+.keywords { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.keyword { display: flex; align-items: stretch; border: 1px solid #5a4418; border-radius: 5px; overflow: hidden; }
+.keyword button { background: #3a2c12; color: var(--warn); border: 0; padding: 3px 8px; font-size: 12px; font-weight: 500; }
+.keyword button.x { background: #2a2010; color: var(--muted); padding: 3px 7px; border-left: 1px solid #5a4418; }
+.keyword button.x:hover { color: var(--bad); }
+.keyword.off button { background: var(--panel-2); color: var(--muted); text-decoration: line-through; }
+.keyword .hits { opacity: .65; font-size: 10.5px; }

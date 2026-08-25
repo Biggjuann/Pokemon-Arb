@@ -61,6 +61,7 @@
         {%- elif run.status == 'no_targets' %}<span class="warn-text">nothing to scan -- no targets configured</span>
         {%- elif run.stats %}{{ run.stats.rejected_matches }} rejected &middot;
           {{ run.stats.below_thresholds }} under thresholds
+          {%- if run.stats.excluded_by_keyword %} &middot; {{ run.stats.excluded_by_keyword }} excluded by keyword{% endif %}
           {%- if run.stats.skipped_no_comp %} &middot; {{ run.stats.skipped_no_comp }} skipped (comp too low to profit){% endif %}
         {%- endif %}
       </td>

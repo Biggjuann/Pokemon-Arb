@@ -46,6 +46,7 @@ class ScanStats:
     api_calls: int = 0
     skipped_no_comp: int = 0
     errors: int = 0
+    excluded_by_keyword: int = 0
     error_samples: list[str] = field(default_factory=list)
 
     def record_error(self, message: str) -> None:
@@ -85,6 +86,7 @@ class ScanService:
         self.session_factory = session_factory or get_sessionmaker()
         self._ebay = ebay_client
         self._pc = pc_client
+        self._exclusions: list[str] = []
 
     # --- clients ------------------------------------------------------
     @property
@@ -180,6 +182,9 @@ class ScanService:
         settings = self.settings
         per_target = listings_per_target or settings.scan_listings_per_target
         stats = ScanStats()
+        with self.session_factory() as session:
+            # Read once per run rather than per listing.
+            self._exclusions = store.active_exclusions(session)
 
         with self.session_factory() as session:
             run = ScanRun(status="running")
@@ -267,6 +272,7 @@ class ScanService:
                     "below_thresholds": stats.below_thresholds,
                     "skipped_no_comp": stats.skipped_no_comp,
                     "errors": stats.errors,
+                    "excluded_by_keyword": stats.excluded_by_keyword,
                 }
                 session.commit()
                 return run
@@ -333,6 +339,15 @@ class ScanService:
     def _process_listing(
         self, session: Session, data: EbayListing, target_product: Product | None, stats: ScanStats
     ) -> None:
+        title = data.title.lower()
+        hit = next((term for term in self._exclusions if term in title), None)
+        if hit:
+            # Checked before the listing is stored: an excluded listing should
+            # leave no trace beyond the counter.
+            stats.excluded_by_keyword += 1
+            store.record_keyword_hit(session, hit)
+            return
+
         listing, created = store.upsert_listing(session, data)
         if created:
             stats.listings_new += 1

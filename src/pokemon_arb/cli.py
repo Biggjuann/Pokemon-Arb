@@ -167,7 +167,8 @@ def top(
                 f"{deal.product.name[:32]:<32} {deal.listing.title[:46]}"
             )
             typer.secho(
-                f"{'':>7}  seen {age_label(deal.listing)} ago", fg=typer.colors.BRIGHT_BLACK
+                f"{'':>7}  seen {age_label(deal.listing.last_seen_at)} ago",
+                fg=typer.colors.BRIGHT_BLACK,
             )
             if deal.risk_flags:
                 typer.secho(f"{'':>7}  risk: {', '.join(deal.risk_flags)}", fg=typer.colors.YELLOW)

@@ -82,13 +82,12 @@ def test_cutoff_tracks_the_clock(settings):
 
 def test_age_label():
     now = utcnow()
-    assert age_label(Listing(last_seen_at=now - dt.timedelta(minutes=4)), now=now) == "4m"
-    assert (
-        age_label(Listing(last_seen_at=now - dt.timedelta(hours=2, minutes=10)), now=now)
-        == "2h 10m"
-    )
+    assert age_label(now - dt.timedelta(minutes=4), now=now) == "4m"
+    assert age_label(now - dt.timedelta(hours=2, minutes=10), now=now) == "2h 10m"
     # A clock skew must not render as a negative age.
-    assert age_label(Listing(last_seen_at=now + dt.timedelta(minutes=5)), now=now) == "0m"
+    assert age_label(now + dt.timedelta(minutes=5), now=now) == "0m"
+    # Targets that were never scanned have no timestamp at all.
+    assert age_label(None) == "never"
 
 
 # --- board -----------------------------------------------------------------

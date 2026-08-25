@@ -5,10 +5,19 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sqlalchemy.orm import Session
 
-from .models import Deal, Listing, PricePoint, Product, ScanRun, Target, utcnow
+from .models import (
+    Deal,
+    ExcludedKeyword,
+    Listing,
+    PricePoint,
+    Product,
+    ScanRun,
+    Target,
+    utcnow,
+)
 from .sources.ebay import EbayListing
 
 
@@ -124,9 +133,175 @@ def upsert_target(
         session.add(target)
     else:
         target.priority = priority
-        target.enabled = True
+        # Deliberately does NOT re-enable: rebuilding the target list must not
+        # resurrect targets the user turned off.
     session.flush()
     return target
+
+
+def add_custom_target(session: Session, query: str) -> Target | None:
+    """A free-text search the user typed, not derived from a comp."""
+    query = query.strip()
+    if not query:
+        return None
+    existing = session.scalar(
+        select(Target).where(Target.query == query, Target.product_id.is_(None))
+    )
+    if existing is not None:
+        existing.enabled = True
+        session.flush()
+        return existing
+    target = Target(query=query, product_id=None, set_name=None, priority=0, enabled=True)
+    session.add(target)
+    session.flush()
+    return target
+
+
+def set_target_enabled(session: Session, target_id: int, enabled: bool) -> Target | None:
+    target = session.get(Target, target_id)
+    if target is not None:
+        target.enabled = enabled
+    return target
+
+
+def delete_target(session: Session, target_id: int) -> bool:
+    target = session.get(Target, target_id)
+    if target is None:
+        return False
+    session.delete(target)
+    return True
+
+
+def bulk_set_enabled(session: Session, set_name: str, enabled: bool) -> int:
+    targets = list(session.scalars(select(Target).where(Target.set_name == set_name)))
+    for target in targets:
+        target.enabled = enabled
+    return len(targets)
+
+
+def list_targets(
+    session: Session,
+    *,
+    search: str | None = None,
+    set_name: str | None = None,
+    enabled: bool | None = None,
+    limit: int = 200,
+) -> list[Target]:
+    stmt = select(Target)
+    if search:
+        stmt = stmt.where(Target.query.ilike(f"%{search.strip()}%"))
+    if set_name:
+        stmt = stmt.where(Target.set_name == set_name)
+    if enabled is not None:
+        stmt = stmt.where(Target.enabled.is_(enabled))
+    stmt = stmt.order_by(Target.enabled.desc(), Target.priority.desc()).limit(limit)
+    return list(session.scalars(stmt))
+
+
+def target_set_summary(session: Session) -> list[dict[str, Any]]:
+    """Per-set target counts, for bulk enable/disable."""
+    rows = session.execute(
+        select(
+            Target.set_name,
+            func.count(),
+            func.sum(func.cast(Target.enabled, Integer)),
+        ).group_by(Target.set_name)
+    ).all()
+    summary = [
+        {"set_name": name or "(custom searches)", "total": total, "enabled": int(on or 0)}
+        for name, total, on in rows
+    ]
+    return sorted(summary, key=lambda row: row["set_name"])
+
+
+# Sensible starting exclusions: things that are not a single English card but
+# that the universal rules do not already catch.
+RECOMMENDED_EXCLUSIONS = [
+    "fan art",
+    "fanart",
+    "artwork",
+    "art card",
+    "acrylic",
+    "sticker",
+    "decal",
+    "poster",
+    "print",
+    "keychain",
+    "figure",
+    "plush",
+    "pin badge",
+    "coin",
+    "jumbo",
+    "oversized",
+    "display case",
+    "toploader",
+    "sleeve",
+    "binder",
+    "code card",
+    "online code",
+    "digital",
+    "ptcgo",
+    "empty box",
+    "wrapper",
+    "menu",
+    "topper",
+    "cosplay",
+    "handmade",
+    "3d",
+    "resin",
+    "shaker",
+]
+
+
+def list_keywords(session: Session, *, enabled_only: bool = False) -> list[ExcludedKeyword]:
+    stmt = select(ExcludedKeyword)
+    if enabled_only:
+        stmt = stmt.where(ExcludedKeyword.enabled.is_(True))
+    return list(session.scalars(stmt.order_by(ExcludedKeyword.term)))
+
+
+def active_exclusions(session: Session) -> list[str]:
+    return [k.term.lower() for k in list_keywords(session, enabled_only=True)]
+
+
+def add_keyword(session: Session, term: str) -> ExcludedKeyword | None:
+    term = " ".join(term.strip().lower().split())
+    if not term:
+        return None
+    existing = session.scalar(select(ExcludedKeyword).where(ExcludedKeyword.term == term))
+    if existing is not None:
+        existing.enabled = True
+        session.flush()
+        return existing
+    keyword = ExcludedKeyword(term=term)
+    session.add(keyword)
+    session.flush()
+    return keyword
+
+
+def set_keyword_enabled(session: Session, keyword_id: int, enabled: bool) -> ExcludedKeyword | None:
+    keyword = session.get(ExcludedKeyword, keyword_id)
+    if keyword is not None:
+        keyword.enabled = enabled
+    return keyword
+
+
+def delete_keyword(session: Session, keyword_id: int) -> bool:
+    keyword = session.get(ExcludedKeyword, keyword_id)
+    if keyword is None:
+        return False
+    session.delete(keyword)
+    return True
+
+
+def record_keyword_hit(session: Session, term: str) -> None:
+    keyword = session.scalar(select(ExcludedKeyword).where(ExcludedKeyword.term == term))
+    if keyword is not None:
+        keyword.hits = (keyword.hits or 0) + 1
+
+
+def add_recommended_keywords(session: Session) -> int:
+    return sum(1 for term in RECOMMENDED_EXCLUSIONS if add_keyword(session, term) is not None)
 
 
 def top_products_per_set(

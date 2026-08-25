@@ -46,13 +46,15 @@ def is_fresh(listing: Listing, settings: Settings, *, now: dt.datetime | None = 
     return listing.last_seen_at >= cutoff(settings, now=now)
 
 
-def age(listing: Listing, *, now: dt.datetime | None = None) -> dt.timedelta:
-    return (now or utcnow()) - listing.last_seen_at
+def age(moment: dt.datetime, *, now: dt.datetime | None = None) -> dt.timedelta:
+    return (now or utcnow()) - moment
 
 
-def age_label(listing: Listing, *, now: dt.datetime | None = None) -> str:
-    """Compact human age, e.g. '4m', '2h 10m'."""
-    seconds = max(0, int(age(listing, now=now).total_seconds()))
+def age_label(moment: dt.datetime | None, *, now: dt.datetime | None = None) -> str:
+    """Compact human age of a timestamp, e.g. '4m', '2h 10m'."""
+    if moment is None:
+        return "never"
+    seconds = max(0, int(age(moment, now=now).total_seconds()))
     hours, remainder = divmod(seconds, 3600)
     minutes = remainder // 60
     if hours:

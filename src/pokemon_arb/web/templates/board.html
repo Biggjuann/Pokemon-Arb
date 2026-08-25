@@ -92,7 +92,7 @@
       <td class="num conf-{{ 'hi' if deal.match_confidence >= 0.85 else ('mid' if deal.match_confidence >= 0.7 else 'lo') }}">
         {{ '%.2f' | format(deal.match_confidence) }}
       </td>
-      <td class="num sub">{{ age_label(deal.listing) }}</td>
+      <td class="num sub">{{ age_label(deal.listing.last_seen_at) }}</td>
       <td class="flags">
         {% for flag in deal.risk_flags %}<span class="flag" title="{{ risk_weights.get(flag, (0, flag))[1] }}">{{ flag.replace('_', ' ') | lower }}</span>{% endfor %}
       </td>

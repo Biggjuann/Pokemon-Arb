@@ -187,6 +187,17 @@ are synced.
 - **`/deals/{id}`** — the full case for one deal: line-by-line economics from
   comp to profit, why the matcher believes it's that card, the comp ladder
   across grades, and every risk flag with its explanation.
+- **`/targets`** — what gets searched, and what gets thrown away. Add free-text
+  searches of your own (`charizard vmax alt art`), enable or disable individual
+  targets or a whole set, and rebuild the top-N-per-set list without re-syncing
+  comps. Disabling survives a rebuild.
+
+  The same page holds **negative keywords**: any title containing an enabled
+  term is dropped before the listing is stored or valued. Proxies, lots,
+  non-English prints and graded slabs are already rejected by the matcher
+  without needing a keyword — this is for what your own searches keep dragging
+  in: fan art, acrylic stands, keychains, oversized promos. Each term shows how
+  many listings it has excluded, so a term stuck at zero is probably misspelled.
 - **`/scans`** — run history, API call usage, and how many listings were rejected
   versus merely under threshold. Also where you populate the catalog on a fresh
   deploy, since there is no shell on a hosted instance.

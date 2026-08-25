@@ -193,6 +193,23 @@ class Target(Base):
     __table_args__ = (UniqueConstraint("query", "product_id", name="uq_target_query_product"),)
 
 
+class ExcludedKeyword(Base):
+    """A word or phrase that disqualifies a listing outright.
+
+    The matcher already rejects the universal cases (proxy, lot, graded slabs
+    with no comp). This is the editable list for what you keep seeing in your
+    own results -- fan art, oversized promos, whatever a given search drags in.
+    """
+
+    __tablename__ = "excluded_keywords"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    term: Mapped[str] = mapped_column(String(128), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ScanRun(Base):
     """One execution of the pipeline, for observability."""
 
