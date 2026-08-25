@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from .. import store
 from ..config import get_settings
 from ..db import get_sessionmaker, init_db
+from ..diagnostics import check_ebay, check_pricecharting
 from ..freshness import age_label, cutoff, display_window, fresh_clause, is_fresh
 from ..models import Deal, Listing, Product, ScanRun, Target
 from ..money import fmt, pct
@@ -397,6 +398,25 @@ def create_app() -> FastAPI:
     ) -> RedirectResponse:
         background.add_task(_run_job, "scan", lambda: _scan_job(max_targets, demo))
         return RedirectResponse("/scans", status_code=303)
+
+    @app.get("/diagnostics", response_class=HTMLResponse)
+    def diagnostics(request: Request, live: bool = Query(True)) -> HTMLResponse:
+        """Why is eBay rejecting us -- answered without a shell.
+
+        Credentials are shown only as fingerprints (length plus a few
+        characters), never in full.
+        """
+        settings = get_settings()
+        return templates.TemplateResponse(
+            request,
+            "diagnostics.html",
+            {
+                "ebay": check_ebay(settings, live=live),
+                "pricecharting": check_pricecharting(settings, live=live),
+                "live": live,
+                "scan_state": _job_state,
+            },
+        )
 
     @app.post("/jobs/cancel")
     def cancel_job() -> RedirectResponse:

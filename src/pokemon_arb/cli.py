@@ -192,6 +192,36 @@ def stats() -> None:
 
 
 @app.command()
+def doctor(
+    live: bool = typer.Option(True, help="Also make real API calls, not just shape checks."),
+) -> None:
+    """Diagnose credential and connectivity problems."""
+    from .diagnostics import check_ebay, check_pricecharting
+
+    settings = get_settings()
+    failed = False
+    for title, report in (
+        ("eBay", check_ebay(settings, live=live)),
+        ("PriceCharting", check_pricecharting(settings, live=live)),
+    ):
+        typer.secho(f"\n{title}", bold=True)
+        for check in report.checks:
+            if check.ok is None:
+                mark, color = "-", typer.colors.BRIGHT_BLACK
+            elif check.ok:
+                mark, color = "OK", typer.colors.GREEN
+            else:
+                mark, color = "FAIL", typer.colors.RED
+                failed = True
+            typer.secho(f"  {mark:>4}  {check.name}", fg=color)
+            typer.secho(f"        {check.detail}", fg=typer.colors.BRIGHT_BLACK)
+            if check.fix:
+                typer.secho(f"        -> {check.fix}", fg=typer.colors.YELLOW)
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def serve(
     host: str = typer.Option(None, help="Bind address; defaults to HOST or 0.0.0.0."),
     port: int = typer.Option(None, help="Bind port; defaults to PORT or 8000."),

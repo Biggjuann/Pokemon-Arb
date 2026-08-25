@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Diagnostics - Pokemon Arb{% endblock %}
+{% macro checklist(report, title) %}
+<section class="panel">
+  <h2>{{ title }}</h2>
+  {% if report.first_failure %}
+    <p class="diag-headline bad">First failure: {{ report.first_failure.name }}</p>
+  {% else %}
+    <p class="diag-headline good">All checks passed.</p>
+  {% endif %}
+  <ul class="checks">
+    {% for check in report.checks %}
+      <li class="check {{ 'pass' if check.ok else ('skip' if check.ok is none else 'fail') }}">
+        <span class="mark">{{ '&#10003;' | safe if check.ok else ('&#8226;' | safe if check.ok is none else '&#10007;' | safe) }}</span>
+        <div>
+          <strong>{{ check.name }}</strong>
+          <div class="detail">{{ check.detail }}</div>
+          {% if check.fix %}<div class="fix">{{ check.fix }}</div>{% endif %}
+        </div>
+      </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endmacro %}
+
+{% block content %}
+<div class="detail-head">
+  <div>
+    <h1>Diagnostics</h1>
+    <p class="sub">Credentials are shown as fingerprints only &mdash; length and a few
+      characters, enough to compare against the eBay console without exposing the key.</p>
+  </div>
+  <div>
+    {% if live %}
+      <a class="secondary" href="/diagnostics?live=false">skip live calls</a>
+    {% else %}
+      <a class="secondary" href="/diagnostics?live=true">run live calls</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panels">
+  {{ checklist(ebay, "eBay") }}
+  {{ checklist(pricecharting, "PriceCharting") }}
+</div>
+{% endblock %}

@@ -158,6 +158,10 @@ are synced.
 - **`/scans`** — run history, API call usage, and how many listings were rejected
   versus merely under threshold. Also where you populate the catalog on a fresh
   deploy, since there is no shell on a hosted instance.
+- **`/diagnostics`** — when eBay or PriceCharting rejects you, this says which
+  check failed and why. Credentials appear only as fingerprints (length plus a
+  few characters), enough to compare against the eBay console without exposing
+  the key. `pokearb doctor` is the same thing on the command line.
 - **Cancelling** — a running scan or sync can be stopped from the banner. It is
   cooperative, not a kill: an in-flight eBay request finishes and its listings
   are kept, and a cancelled sync keeps the cards it already committed, so a
@@ -213,6 +217,7 @@ so large they imply the listing is fake · weak match confidence.
 | `pokearb scan [--demo]` | Search, match, price and rank |
 | `pokearb top` | Print the ranked board |
 | `pokearb stats` | Catalog counts and last scan |
+| `pokearb doctor` | Diagnose credential and connectivity problems |
 | `pokearb serve` | Run the web app |
 
 ---
@@ -276,6 +281,7 @@ src/pokemon_arb/
   store.py             upserts and read queries
   money.py             integer-cent arithmetic
   freshness.py         the six-hour display rule, in one place
+  diagnostics.py       credential and connectivity checks
   matching/
     normalize.py       eBay title -> card number, variant, language, hazards
     matcher.py         listing <-> product confidence scoring

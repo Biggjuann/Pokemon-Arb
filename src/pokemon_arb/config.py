@@ -3,8 +3,25 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated
 
+from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _clean_secret(value: object) -> object:
+    """Trim whitespace and quote marks off a pasted credential.
+
+    A trailing newline from a copy-paste changes the Basic auth header and
+    eBay answers 401 invalid_client -- identical to a genuinely wrong key,
+    and far harder to spot.
+    """
+    if isinstance(value, str):
+        return value.strip().strip("\"'") or None
+    return value
+
+
+Secret = Annotated[str | None, BeforeValidator(_clean_secret)]
 
 
 class Settings(BaseSettings):
@@ -19,8 +36,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/pokearb.db"
 
     # --- eBay Browse API ----------------------------------------------
-    ebay_client_id: str | None = None
-    ebay_client_secret: str | None = None
+    ebay_client_id: Secret = None
+    ebay_client_secret: Secret = None
     # "production" or "sandbox"
     ebay_env: str = "production"
     ebay_marketplace: str = "EBAY_US"
@@ -31,7 +48,7 @@ class Settings(BaseSettings):
     ebay_max_calls_per_scan: int = 400
 
     # --- PriceCharting -------------------------------------------------
-    pricecharting_token: str | None = None
+    pricecharting_token: Secret = None
 
     # --- deal economics (all rates are fractions of 1.0) ---------------
     # eBay final value fee for trading cards (incl. payment processing).
