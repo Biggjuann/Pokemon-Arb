@@ -57,9 +57,12 @@
       <td class="num">{{ run.api_calls }}</td>
       <td class="num">{{ '%.1fs' | format(run.duration_seconds) if run.duration_seconds else '--' }}</td>
       <td class="sub">
-        {%- if run.error %}<span class="bad">{{ run.error[:120] }}</span>
+        {%- if run.error %}<span class="bad">{{ run.error[:200] }}</span>
         {%- elif run.status == 'no_targets' %}<span class="warn-text">nothing to scan -- no targets configured</span>
-        {%- elif run.stats %}{{ run.stats.rejected_matches }} rejected &middot; {{ run.stats.below_thresholds }} under thresholds{% endif %}
+        {%- elif run.stats %}{{ run.stats.rejected_matches }} rejected &middot;
+          {{ run.stats.below_thresholds }} under thresholds
+          {%- if run.stats.skipped_no_comp %} &middot; {{ run.stats.skipped_no_comp }} skipped (comp too low to profit){% endif %}
+        {%- endif %}
       </td>
     </tr>
   {% else %}

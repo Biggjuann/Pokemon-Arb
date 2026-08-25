@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -45,6 +45,13 @@ class ScanStats:
     below_thresholds: int = 0
     api_calls: int = 0
     skipped_no_comp: int = 0
+    errors: int = 0
+    error_samples: list[str] = field(default_factory=list)
+
+    def record_error(self, message: str) -> None:
+        self.errors += 1
+        if message not in self.error_samples and len(self.error_samples) < 3:
+            self.error_samples.append(message)
 
 
 def build_query(product: Product) -> str:
@@ -213,7 +220,12 @@ class ScanService:
                     try:
                         self._scan_target(session, target, per_target, stats)
                     except EbayError as exc:
+                        # Counted and reported, not just logged: a scan where
+                        # every eBay call failed used to finish as "ok" with
+                        # zero listings, which is indistinguishable from a
+                        # market that simply had no bargains that day.
                         log.error("target %r failed: %s", target.query, exc)
+                        stats.record_error(str(exc))
                         session.rollback()
                         if "rate limit" in str(exc).lower():
                             break
@@ -231,8 +243,19 @@ class ScanService:
                 # symptom of an unpopulated catalog, and saying "ok" hides that.
                 if cancelled:
                     run.status = "cancelled"
+                elif not targets:
+                    run.status = "no_targets"
+                elif stats.errors and stats.listings_seen == 0:
+                    # Nothing worked. Almost always credentials or endpoint.
+                    run.status = "failed"
+                elif stats.errors:
+                    run.status = "partial"
                 else:
-                    run.status = "ok" if targets else "no_targets"
+                    run.status = "ok"
+                if stats.errors:
+                    run.error = f"{stats.errors} of {len(targets)} targets failed: " + " | ".join(
+                        stats.error_samples
+                    )
                 run.finished_at = utcnow()
                 run.targets_scanned = stats.targets_scanned
                 run.listings_seen = stats.listings_seen
@@ -243,6 +266,7 @@ class ScanService:
                     "rejected_matches": stats.rejected_matches,
                     "below_thresholds": stats.below_thresholds,
                     "skipped_no_comp": stats.skipped_no_comp,
+                    "errors": stats.errors,
                 }
                 session.commit()
                 return run

@@ -204,3 +204,60 @@ def test_targets_rotate_so_the_tail_is_not_starved():
         scanned = {t.id for t in session.scalars(select(Target)) if t.last_scanned_at}
     # The second pass must reach targets the first one never touched.
     assert len(scanned - first) == 3
+
+
+# --- failures must not masquerade as an empty market -----------------------
+class _BrokenEbay(DemoEbayClient):
+    """Every search fails, the way bad credentials behave."""
+
+    def search(self, *_args, **_kwargs):
+        from pokemon_arb.sources.ebay import EbayAuthError
+
+        raise EbayAuthError("eBay token request failed (400): invalid_client")
+
+
+def test_a_scan_where_every_call_fails_is_reported_as_failed():
+    service = ScanService(ebay_client=_BrokenEbay())
+    service.sync_products(demo_products())
+    service.build_targets(per_set=3)
+    run = service.run()
+
+    assert run.status == "failed"
+    assert run.listings_seen == 0
+    assert run.stats["errors"] > 0
+    assert "invalid_client" in run.error
+    assert "targets failed" in run.error
+
+
+def test_partial_failure_is_distinguished_from_clean_success():
+    class _FlakyEbay(DemoEbayClient):
+        def __init__(self):
+            super().__init__(seed=3)
+            self.n = 0
+
+        def search(self, *args, **kwargs):
+            from pokemon_arb.sources.ebay import EbayError
+
+            self.n += 1
+            if self.n % 2:
+                raise EbayError("transient upstream failure")
+            yield from super().search(*args, **kwargs)
+
+    service = ScanService(ebay_client=_FlakyEbay())
+    service.sync_products(demo_products())
+    service.build_targets(per_set=3)
+    run = service.run()
+
+    assert run.status == "partial"
+    assert run.listings_seen > 0
+    assert run.stats["errors"] > 0
+
+
+def test_clean_scan_records_no_error():
+    service = ScanService(ebay_client=DemoEbayClient(seed=7))
+    service.sync_products(demo_products())
+    service.build_targets(per_set=3)
+    run = service.run()
+    assert run.status == "ok"
+    assert run.error is None
+    assert run.stats["errors"] == 0

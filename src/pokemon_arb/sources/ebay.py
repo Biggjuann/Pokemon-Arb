@@ -163,8 +163,16 @@ class EbayClient:
             data={"grant_type": "client_credentials", "scope": APP_SCOPE},
         )
         if response.status_code != 200:
+            hint = ""
+            if "invalid_client" in response.text or response.status_code in (400, 401):
+                environment = "sandbox" if "sandbox" in self.api_base else "production"
+                hint = (
+                    f" -- these credentials were rejected by the {environment} endpoint. "
+                    f"Sandbox and production keysets are not interchangeable: check that "
+                    f"EBAY_ENV matches the keyset you created."
+                )
             raise EbayAuthError(
-                f"eBay token request failed ({response.status_code}): {response.text[:300]}"
+                f"eBay token request failed ({response.status_code}): {response.text[:200]}{hint}"
             )
         payload = response.json()
         self._token = payload["access_token"]
