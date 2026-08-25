@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # Browse API allows 5k calls/day on the default keyset; stay well under.
     ebay_max_calls_per_scan: int = 400
 
+    # --- eBay marketplace account deletion notifications ------------------
+    # Required before a production keyset will authenticate at all. The URL
+    # must match the developer console entry character for character: it is
+    # hashed into the challenge response.
+    ebay_verification_token: Secret = None
+    ebay_deletion_endpoint_url: Secret = None
+
     # --- PriceCharting -------------------------------------------------
     pricecharting_token: Secret = None
 

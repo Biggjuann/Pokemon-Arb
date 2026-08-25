@@ -72,6 +72,38 @@ The app uses the official Browse API with an application (client-credentials)
 token — no scraping. The default keyset allows 5,000 calls/day;
 `EBAY_MAX_CALLS_PER_SCAN` (default 400) keeps a single scan well inside that.
 
+### eBay account deletion endpoint (required for production)
+
+eBay will not authenticate a production keyset until it has validated an
+endpoint that receives account-deletion notices. Skipping this is why a
+correct-looking App ID and Cert ID come back `401 invalid_client`. The app
+serves the endpoint at `/ebay/account-deletion`:
+
+```bash
+pokearb ebay-token          # generate an acceptable verification token
+```
+
+Set both variables, deploy, then check `/diagnostics` — it calls your own
+public URL with a random challenge and verifies the reply, which is exactly
+what eBay does. Once it passes, paste the same URL and token into the console
+under **Application Keys → Notifications → Marketplace Account Deletion** and
+hit Save.
+
+```
+EBAY_VERIFICATION_TOKEN=<from pokearb ebay-token>
+EBAY_DELETION_ENDPOINT_URL=https://your-app.up.railway.app/ebay/account-deletion
+```
+
+The URL is hashed into the challenge response, so it must match the console
+entry character for character — a trailing slash or `http://` fails validation
+with no useful message.
+
+On a real notification the app clears the deleted user's username from any
+cached listings and acknowledges with `204`. The listing itself stays: a card
+and its price are not personal data. Note that eBay signs these notifications
+and this endpoint does not yet verify the signature, so it trusts any caller;
+the only effect is clearing a username, and the next scan restores it.
+
 ### PriceCharting API
 1. A PriceCharting API subscription gives you a token.
 2. Set `PRICECHARTING_TOKEN`.
@@ -218,6 +250,7 @@ so large they imply the listing is fake · weak match confidence.
 | `pokearb top` | Print the ranked board |
 | `pokearb stats` | Catalog counts and last scan |
 | `pokearb doctor` | Diagnose credential and connectivity problems |
+| `pokearb ebay-token` | Generate an eBay verification token |
 | `pokearb serve` | Run the web app |
 
 ---
@@ -282,6 +315,7 @@ src/pokemon_arb/
   money.py             integer-cent arithmetic
   freshness.py         the six-hour display rule, in one place
   diagnostics.py       credential and connectivity checks
+  ebay_notifications.py  account-deletion challenge and purge
   matching/
     normalize.py       eBay title -> card number, variant, language, hazards
     matcher.py         listing <-> product confidence scoring

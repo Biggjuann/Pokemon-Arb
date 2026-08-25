@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BeforeValidator
@@ -20,7 +20,12 @@ from sqlalchemy.orm import Session
 from .. import store
 from ..config import get_settings
 from ..db import get_sessionmaker, init_db
-from ..diagnostics import check_ebay, check_pricecharting
+from ..diagnostics import check_account_deletion, check_ebay, check_pricecharting
+from ..ebay_notifications import (
+    compute_challenge_response,
+    extract_username,
+    purge_user_data,
+)
 from ..freshness import age_label, cutoff, display_window, fresh_clause, is_fresh
 from ..models import Deal, Listing, Product, ScanRun, Target
 from ..money import fmt, pct
@@ -399,6 +404,47 @@ def create_app() -> FastAPI:
         background.add_task(_run_job, "scan", lambda: _scan_job(max_targets, demo))
         return RedirectResponse("/scans", status_code=303)
 
+    # --- eBay marketplace account deletion ----------------------------
+    # eBay validates this endpoint before a production keyset works, so it
+    # must answer the challenge even when nothing else is configured.
+    @app.get("/ebay/account-deletion", include_in_schema=False)
+    def account_deletion_challenge(challenge_code: str = Query(...)) -> JSONResponse:
+        settings = get_settings()
+        token = settings.ebay_verification_token
+        endpoint = settings.ebay_deletion_endpoint_url
+        if not token or not endpoint:
+            log.error(
+                "account-deletion challenge received but "
+                "EBAY_VERIFICATION_TOKEN / EBAY_DELETION_ENDPOINT_URL are not set"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="endpoint not configured: set EBAY_VERIFICATION_TOKEN and "
+                "EBAY_DELETION_ENDPOINT_URL",
+            )
+        return JSONResponse(
+            {"challengeResponse": compute_challenge_response(challenge_code, token, endpoint)},
+            media_type="application/json",
+        )
+
+    @app.post("/ebay/account-deletion", status_code=204, include_in_schema=False)
+    def account_deletion_notice(payload: dict[str, Any]) -> Response:
+        """Acknowledge immediately, then scrub what we hold on that user.
+
+        eBay marks the callback down if acknowledgement is slow, so nothing
+        here is allowed to fail the response: the purge is best effort and a
+        problem with it is logged rather than raised.
+        """
+        username = extract_username(payload)
+        try:
+            with get_sessionmaker()() as session:
+                purged = purge_user_data(session, username)
+                session.commit()
+            log.info("account deletion notice: scrubbed %s listing(s)", purged)
+        except Exception:
+            log.exception("failed to purge data for an account deletion notice")
+        return Response(status_code=204)
+
     @app.get("/diagnostics", response_class=HTMLResponse)
     def diagnostics(request: Request, live: bool = Query(True)) -> HTMLResponse:
         """Why is eBay rejecting us -- answered without a shell.
@@ -412,6 +458,7 @@ def create_app() -> FastAPI:
             "diagnostics.html",
             {
                 "ebay": check_ebay(settings, live=live),
+                "account_deletion": check_account_deletion(settings, live=live),
                 "pricecharting": check_pricecharting(settings, live=live),
                 "live": live,
                 "scan_state": _job_state,

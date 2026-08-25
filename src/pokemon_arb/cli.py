@@ -196,12 +196,13 @@ def doctor(
     live: bool = typer.Option(True, help="Also make real API calls, not just shape checks."),
 ) -> None:
     """Diagnose credential and connectivity problems."""
-    from .diagnostics import check_ebay, check_pricecharting
+    from .diagnostics import check_account_deletion, check_ebay, check_pricecharting
 
     settings = get_settings()
     failed = False
     for title, report in (
         ("eBay", check_ebay(settings, live=live)),
+        ("eBay account deletion endpoint", check_account_deletion(settings, live=live)),
         ("PriceCharting", check_pricecharting(settings, live=live)),
     ):
         typer.secho(f"\n{title}", bold=True)
@@ -219,6 +220,20 @@ def doctor(
                 typer.secho(f"        -> {check.fix}", fg=typer.colors.YELLOW)
     if failed:
         raise typer.Exit(code=1)
+
+
+@app.command("ebay-token")
+def ebay_token(length: int = typer.Option(48, min=32, max=80)) -> None:
+    """Generate a verification token eBay will accept."""
+    from .ebay_notifications import generate_verification_token
+
+    token = generate_verification_token(length)
+    typer.echo(token)
+    typer.secho(
+        "\nSet this as EBAY_VERIFICATION_TOKEN and paste the same value into the "
+        "eBay developer console.",
+        fg=typer.colors.YELLOW,
+    )
 
 
 @app.command()

@@ -263,6 +263,101 @@ def check_pricecharting(settings: Settings, *, live: bool = True) -> Report:
     return report
 
 
+def check_account_deletion(settings: Settings, *, live: bool = True) -> Report:
+    """eBay validates this endpoint before a production keyset authenticates.
+
+    The live check calls our own public URL with a random challenge and
+    verifies the reply, which is exactly what eBay does on Save -- so a pass
+    here means the console will accept it.
+    """
+    import secrets
+
+    from .ebay_notifications import (
+        compute_challenge_response,
+        endpoint_problems,
+        token_problems,
+    )
+
+    report = Report()
+    token = settings.ebay_verification_token
+    endpoint = settings.ebay_deletion_endpoint_url
+
+    problems = token_problems(token)
+    report.add(
+        "Verification token",
+        not problems,
+        fingerprint(token) if token else "not set",
+        "Set EBAY_VERIFICATION_TOKEN. Generate one with `pokearb ebay-token`. "
+        + "; ".join(problems)
+        if problems
+        else "",
+    )
+
+    problems = endpoint_problems(endpoint)
+    report.add(
+        "Endpoint URL",
+        not problems,
+        endpoint or "not set",
+        "Set EBAY_DELETION_ENDPOINT_URL to the exact URL registered in the eBay "
+        "console -- it is hashed into the response, so any difference fails. " + "; ".join(problems)
+        if problems
+        else "",
+    )
+
+    if not (token and endpoint) or not live:
+        return report
+
+    # Reproduce eBay's own validation call against the public URL.
+    import httpx
+
+    challenge = secrets.token_hex(8)
+    expected = compute_challenge_response(challenge, token, endpoint)
+    try:
+        response = httpx.get(endpoint, params={"challenge_code": challenge}, timeout=15.0)
+    except Exception as exc:
+        report.add(
+            "Endpoint answers eBay's challenge",
+            False,
+            f"could not reach {endpoint}: {type(exc).__name__}: {exc}"[:300],
+            "eBay must be able to reach this URL over HTTPS from the public internet.",
+        )
+        return report
+
+    if response.status_code != 200:
+        report.add(
+            "Endpoint answers eBay's challenge",
+            False,
+            f"HTTP {response.status_code}: {response.text[:200]}",
+            "The challenge must return 200 with a JSON challengeResponse.",
+        )
+        return report
+
+    try:
+        got = response.json().get("challengeResponse")
+    except ValueError:
+        got = None
+    matches = got == expected
+    report.add(
+        "Endpoint answers eBay's challenge",
+        matches,
+        "challenge response matches"
+        if matches
+        else f"expected {expected[:16]}..., endpoint returned {str(got)[:16]}...",
+        ""
+        if matches
+        else "Usually EBAY_DELETION_ENDPOINT_URL does not match the URL eBay is "
+        "calling, character for character.",
+    )
+    content_type = response.headers.get("content-type", "")
+    report.add(
+        "Challenge content type",
+        content_type.startswith("application/json"),
+        content_type or "missing",
+        "" if content_type.startswith("application/json") else "eBay requires application/json.",
+    )
+    return report
+
+
 def full_report(settings: Settings, *, live: bool = True) -> dict[str, Any]:
     return {
         "ebay": check_ebay(settings, live=live),
