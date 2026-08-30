@@ -305,5 +305,25 @@ def reset_findings(session: Session) -> dict[str, int]:
     return counts
 
 
+def clear_catalog(session: Session) -> dict[str, int]:
+    """Delete the card catalog and everything derived from it.
+
+    Deals go too: they are priced against comps, and a deal whose comp no
+    longer exists cannot be explained or trusted.
+    """
+    counts = {}
+    for label, model in (
+        ("deals", Deal),
+        ("targets", Target),
+        ("price_points", PricePoint),
+        ("products", Product),
+    ):
+        rows = list(session.scalars(select(model)))
+        for row in rows:
+            session.delete(row)
+        counts[label] = len(rows)
+    return counts
+
+
 def latest_scan(session: Session) -> ScanRun | None:
     return session.scalar(select(ScanRun).order_by(ScanRun.started_at.desc()).limit(1))

@@ -204,13 +204,18 @@ def empty_client():
 
 def test_fresh_deploy_explains_what_to_do(empty_client):
     body = empty_client.get("/scans").text
-    assert "Set-up needed" in body
-    assert "No cards are being tracked yet" in body
+    assert "What to scan for" in body
+    assert "Nothing is being tracked yet" in body
     assert 'action="/sync"' in body
 
 
-def test_setup_panel_disappears_once_populated(client):
-    assert "Set-up needed" not in client.get("/scans").text
+def test_scope_form_stays_available_once_populated(client):
+    """It is the only place to change what is scanned, so it must not hide."""
+    body = client.get("/scans").text
+    assert "What to scan for" in body
+    assert 'action="/sync"' in body
+    assert "Nothing is being tracked yet" not in body
+    assert "Currently tracking" in body
 
 
 def test_scan_with_nothing_configured_is_not_reported_as_success(monkeypatch, tmp_path):
@@ -226,7 +231,7 @@ def test_scan_with_nothing_configured_is_not_reported_as_success(monkeypatch, tm
         body = live_client.get("/scans").text
     assert "no targets" in body
     assert "nothing to scan" in body
-    assert "Set-up needed" in body
+    assert "What to scan for" in body
 
 
 def test_sync_route_redirects(empty_client):

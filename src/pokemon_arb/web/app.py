@@ -133,18 +133,37 @@ def _scan_job(max_targets: int | None, demo: bool) -> str:
     )
 
 
-def _sync_job(queries: list[str], per_set: int) -> str:
+def _sync_job(queries: list[str], per_set: int, replace: bool = False) -> str:
     """Pull comps from PriceCharting, then rebuild the target list.
 
     Both halves run together because comps without targets leave the app in
     exactly the state that looks broken: a scan that succeeds and does nothing.
+
+    ``replace`` empties the catalog first, so the result is exactly what was
+    asked for. Without it targets are rebuilt from every card ever synced, and
+    a narrower search would not actually narrow anything.
     """
     from ..pipeline.scan import ScanService
 
+    cleared = ""
+    if replace:
+        with get_sessionmaker()() as session:
+            counts = store.clear_catalog(session)
+            session.commit()
+        cleared = f"replaced {counts['products']} cards, "
+
     service = ScanService()
-    synced = service.sync_from_queries(queries) if queries else service.sync_from_price_guide()
+    cancel = _job_cancel.is_set
+    synced = (
+        service.sync_from_queries(queries, should_cancel=cancel)
+        if queries
+        else service.sync_from_price_guide(should_cancel=cancel)
+    )
+    # Build targets from whatever was synced, even on cancel: a partial
+    # catalog you can scan beats a full one you cannot.
     targets = service.build_targets(per_set=per_set)
-    return f"synced {synced} cards, {targets} targets active"
+    verb = "cancelled after" if cancel() else "synced"
+    return f"{cleared}{verb} {synced} cards, {targets} targets active"
 
 
 def _seed_demo_if_empty() -> None:
@@ -417,6 +436,7 @@ def create_app() -> FastAPI:
         background: BackgroundTasks,
         confirm: str = Form(""),
         rescan: bool = Form(False),
+        clear_catalog: bool = Form(False),
         db: Session = Depends(get_db),
     ) -> RedirectResponse:
         """Clear every finding and optionally start over.
@@ -428,11 +448,15 @@ def create_app() -> FastAPI:
         if confirm != "yes":
             raise HTTPException(status_code=400, detail="confirmation required")
         counts = store.reset_findings(db)
-        db.commit()
         summary = (
             f"cleared {counts['deals']} deals, {counts['listings']} listings, "
             f"{counts['scans']} scan records"
         )
+        if clear_catalog:
+            catalog = store.clear_catalog(db)
+            summary += f", {catalog['products']} cards, {catalog['targets']} targets"
+            rescan = False  # nothing left to scan for
+        db.commit()
         _job_state["last_result"] = summary
         if rescan:
             background.add_task(_run_job, "scan", lambda: _scan_job(None, False))
@@ -558,14 +582,17 @@ def create_app() -> FastAPI:
         background: BackgroundTasks,
         queries: str = Form(""),
         per_set: int = Form(25),
+        replace: bool = Form(False),
     ) -> RedirectResponse:
-        """Populate the catalog: PriceCharting comps, then targets.
+        """Set what gets scanned: PriceCharting comps, then targets.
 
         With no queries this downloads the whole pokemon-cards price guide; a
         comma or newline separated list narrows it to specific cards.
         """
         terms = [q.strip() for q in queries.replace(chr(10), ",").split(",") if q.strip()]
-        background.add_task(_run_job, "sync", lambda: _sync_job(terms, max(1, min(per_set, 200))))
+        background.add_task(
+            _run_job, "sync", lambda: _sync_job(terms, max(1, min(per_set, 200)), replace)
+        )
         return RedirectResponse("/scans", status_code=303)
 
     # --- json api -----------------------------------------------------

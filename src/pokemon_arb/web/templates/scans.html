@@ -10,37 +10,45 @@
   </span></div>
 </section>
 
-{% if not counts.products or not counts.targets %}
-  <section class="panel setup">
-    <h2>Set-up needed</h2>
-    <p>
-      {% if not counts.products %}
-        No cards are being tracked yet, so a scan has nothing to search for.
-        Load market comps from PriceCharting to build the catalog.
-      {% else %}
-        {{ counts.products }} cards are loaded but no search targets exist.
-        Build targets from the most valuable cards in each set.
-      {% endif %}
-    </p>
-    <form method="post" action="/sync" class="setup-form">
-      <label>Cards to look up
-        <input type="text" name="queries"
-               placeholder="charizard, umbreon vmax  (blank = whole price guide)">
-      </label>
-      <label>Top cards per set
-        <input type="number" name="per_set" value="25" min="1" max="200">
-      </label>
-      <button type="submit" {{ 'disabled' if scan_state and scan_state.running }}>
-        {{ 'Working...' if scan_state and scan_state.running else 'Load comps and build targets' }}
-      </button>
-    </form>
-    <p class="sub">
-      Leaving the box blank downloads the entire pokemon-cards price guide, which
-      needs a PriceCharting subscription and takes a few minutes. Naming a few
-      cards is the faster way to check the pipeline end to end.
-    </p>
-  </section>
-{% endif %}
+<section class="panel setup">
+  <h2>What to scan for</h2>
+  {% if not counts.products %}
+    <p class="warn-text">Nothing is being tracked yet, so a scan has nothing to
+      search for. Name a few cards below to get started.</p>
+  {% else %}
+    <p class="sub">Currently tracking <strong>{{ counts.products }}</strong> cards
+      across <strong>{{ counts.targets }}</strong> search targets.</p>
+  {% endif %}
+
+  <form method="post" action="/sync" class="setup-form">
+    <label>Cards to look up
+      <input type="text" name="queries"
+             placeholder="charizard, umbreon vmax  (blank = whole price guide)">
+    </label>
+    <label>Top cards per set
+      <input type="number" name="per_set" value="25" min="1" max="200">
+    </label>
+    <label class="check">
+      <input type="checkbox" name="replace" value="true"> replace what is tracked
+    </label>
+    <button type="submit" {{ 'disabled' if scan_state and scan_state.running }}>
+      {{ 'Working...' if scan_state and scan_state.running else 'Load comps and build targets' }}
+    </button>
+  </form>
+
+  <p class="sub">
+    Names are looked up on PriceCharting, and the most valuable cards in each set
+    they belong to become search targets. Leave the box blank to pull the entire
+    pokemon-cards price guide &mdash; that needs a subscription and takes a few
+    minutes.
+  </p>
+  <p class="sub">
+    <strong>replace what is tracked</strong> empties the catalog first, so you end
+    up with exactly what you asked for. Without it the new cards are added to what
+    is already there, and targets are rebuilt across all of it &mdash; so a
+    narrower search will not actually narrow anything.
+  </p>
+</section>
 
 <section class="panel">
   <h2>Negative keywords</h2>
@@ -95,11 +103,13 @@
     <div>
       <h3>Start from scratch</h3>
       <p class="sub">Deletes every deal, listing and run record, then optionally scans
-        again. Keeps the {{ counts.products }} cards and {{ counts.targets }} targets
-        &mdash; those cost API calls to rebuild and are not what goes stale.</p>
+        again. By default it keeps the {{ counts.products }} cards and
+        {{ counts.targets }} targets &mdash; those cost API calls to rebuild and are
+        not what goes stale.</p>
       <form method="post" action="/scans/reset" class="setup-form">
         <label class="check"><input type="checkbox" name="confirm" value="yes" required> I'm sure</label>
         <label class="check"><input type="checkbox" name="rescan" value="true" checked> scan afterwards</label>
+        <label class="check"><input type="checkbox" name="clear_catalog" value="true"> also drop the card catalog</label>
         <button type="submit" class="danger" {{ 'disabled' if scan_state and scan_state.running }}>
           Reset and rescan
         </button>

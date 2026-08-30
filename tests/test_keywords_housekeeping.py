@@ -23,6 +23,17 @@ def seeded():
 
 
 @pytest.fixture
+def pc_token(monkeypatch):
+    """The sync path needs a PriceCharting token; conftest strips it."""
+    from pokemon_arb.config import get_settings
+
+    monkeypatch.setenv("PRICECHARTING_TOKEN", "test-token")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
 def client(seeded):
     with TestClient(create_app()) as test_client:
         yield test_client
@@ -195,3 +206,102 @@ def test_reset_on_an_empty_database_is_harmless(client):
         client.post("/scans/reset", data={"confirm": "yes"}, follow_redirects=False).status_code
         == 303
     )
+
+
+# --- setting scope through the web path ------------------------------------
+# These go through the app's job functions rather than ScanService directly.
+# Testing the pipeline in isolation is what let a missing should_cancel in
+# _sync_job survive: the capability worked, the wiring to it did not.
+
+
+def _guide(rows: int) -> str:
+    header = (
+        "id,console-name,product-name,loose-price,cib-price,new-price,"
+        "graded-price,box-only-price,manual-only-price,sales-volume,release-date\n"
+    )
+    return header + "".join(
+        f"{i},Pokemon Base Set,Card #{i},10.00,,,,,,5,1999-01-09\n" for i in range(rows)
+    )
+
+
+def test_sync_job_threads_the_cancel_flag(pc_token):
+    """The web Cancel button must reach the sync, not just the pipeline."""
+    import httpx
+    import respx
+
+    from pokemon_arb.web import app as app_module
+
+    with respx.mock(base_url="https://www.pricecharting.com") as mock:
+        mock.get("/price-guide/download-custom").mock(
+            return_value=httpx.Response(200, text=_guide(2000))
+        )
+        app_module._job_cancel.set()
+        try:
+            result = app_module._sync_job([], per_set=5)
+        finally:
+            app_module._job_cancel.clear()
+
+    assert "cancelled after 0 cards" in result
+    with get_sessionmaker()() as session:
+        assert session.query(Product).count() == 0
+
+
+def test_sync_job_without_replace_adds_to_the_catalog(seeded, pc_token):
+    from pokemon_arb.web import app as app_module
+
+    with get_sessionmaker()() as session:
+        before = session.query(Product).count()
+
+    import httpx
+    import respx
+
+    with respx.mock(base_url="https://www.pricecharting.com") as mock:
+        mock.get("/price-guide/download-custom").mock(
+            return_value=httpx.Response(200, text=_guide(3))
+        )
+        app_module._sync_job([], per_set=5, replace=False)
+
+    with get_sessionmaker()() as session:
+        assert session.query(Product).count() == before + 3
+
+
+def test_sync_job_with_replace_narrows_the_catalog(seeded, pc_token):
+    """Without replace, targets are rebuilt across everything ever synced."""
+    import httpx
+    import respx
+
+    from pokemon_arb.web import app as app_module
+
+    with respx.mock(base_url="https://www.pricecharting.com") as mock:
+        mock.get("/price-guide/download-custom").mock(
+            return_value=httpx.Response(200, text=_guide(3))
+        )
+        result = app_module._sync_job([], per_set=5, replace=True)
+
+    assert "replaced" in result
+    with get_sessionmaker()() as session:
+        assert session.query(Product).count() == 3
+        assert session.query(Target).count() == 3
+
+
+def test_reset_can_also_drop_the_catalog(client, seeded):
+    seeded.run()
+    response = client.post(
+        "/scans/reset",
+        data={"confirm": "yes", "clear_catalog": "true"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with get_sessionmaker()() as session:
+        assert session.query(Product).count() == 0
+        assert session.query(Target).count() == 0
+        assert session.query(Deal).count() == 0
+
+
+def test_dropping_the_catalog_leaves_the_scope_form_usable(client, seeded):
+    client.post(
+        "/scans/reset", data={"confirm": "yes", "clear_catalog": "true"}, follow_redirects=False
+    )
+    body = client.get("/scans").text
+    assert "What to scan for" in body
+    assert "Nothing is being tracked yet" in body

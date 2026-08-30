@@ -188,15 +188,21 @@ are synced.
   comp to profit, why the matcher believes it's that card, the comp ladder
   across grades, and every risk flag with its explanation.
 - **`/scans`** — run history, API call usage, and how many listings were rejected
-  versus merely under threshold. Also where you populate the catalog on a fresh
-  deploy, since there is no shell on a hosted instance.
+  versus merely under threshold.
+
+  **What to scan for** lives here and is always available, not just when the
+  catalog is empty: name cards, set how many top cards per set to track, and
+  tick *replace what is tracked* to empty the catalog first so you end up with
+  exactly what you asked for. Without replace the new cards are added to what is
+  already there and targets are rebuilt across all of it, so a narrower search
+  would not actually narrow anything.
 
   It holds two housekeeping actions, both requiring an explicit confirmation:
   **clear scan history** removes the run records and nothing else, and **start
   from scratch** deletes every deal, listing and run record before optionally
-  rescanning. Neither touches the card catalog, targets or keywords — those
-  cost API calls and manual setup to rebuild, and none of them is what goes
-  stale.
+  rescanning. By default neither touches the card catalog, targets or keywords —
+  those cost API calls and manual setup to rebuild, and none of them is what
+  goes stale. *Also drop the card catalog* on the reset goes all the way.
 
   **Negative keywords** live here too: any title containing an enabled term is
   dropped before the listing is stored or valued. Proxies, lots, non-English
