@@ -46,7 +46,10 @@ class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    pc_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    # Identity in whatever source produced this comp: a PriceCharting product
+    # id, or "peer:<target>:<grade>:<number>" for a comp derived from the
+    # asking prices of other eBay listings.
+    external_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     set_name: Mapped[str] = mapped_column(String(255), index=True)
     card_number: Mapped[str | None] = mapped_column(String(32), index=True)
@@ -62,7 +65,10 @@ class Product(Base):
     grade95_cents: Mapped[int | None] = mapped_column(Integer)
     psa10_cents: Mapped[int | None] = mapped_column(Integer)
 
-    sales_volume: Mapped[int | None] = mapped_column(Integer, default=0)
+    # None means the comp source publishes no sales count. A column default of
+    # 0 would erase that distinction, since SQLAlchemy applies the default to
+    # an explicit None at insert -- and 0 reads as "never sells".
+    sales_volume: Mapped[int | None] = mapped_column(Integer, default=None)
     # Precomputed lowercase token bag used by the matcher.
     search_blob: Mapped[str] = mapped_column(Text, default="")
     last_synced_at: Mapped[dt.datetime | None] = mapped_column(DateTime)

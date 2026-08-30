@@ -104,6 +104,45 @@ and its price are not personal data. Note that eBay signs these notifications
 and this endpoint does not yet verify the signature, so it trusts any caller;
 the only effect is clearing a username, and the next scan restores it.
 
+### Comps without a second subscription
+
+`COMP_SOURCE=peer` runs the whole app on eBay alone, with no PriceCharting
+token. Be clear-eyed about what changes.
+
+eBay does not sell you sold prices. [Marketplace Insights](https://developer.ebay.com/api-docs/buy/marketplace-insights/static/overview.html),
+the sold-items API, is a Limited Release that eBay's own docs describe as
+"restricted and not open to new users at this time", and the Browse API returns
+active listings only. So the only signal available is what everyone else is
+currently **asking**.
+
+Within a single search, listings for the same card and grade are pooled and each
+one is valued against the others. Four things keep that honest:
+
+- **A listing never contributes to the comp it is judged against.** Otherwise the
+  bargain you are hunting drags down its own reference price, and the cheapest
+  listing in a thin group always looks fair.
+- **The comp is a low percentile of the asks, not the median** (`PEER_COMP_PERCENTILE`,
+  default 0.35). Sellers list optimistically; the ones that clear sit toward the
+  bottom of the distribution.
+- **Grades are priced separately.** A PSA 10 in the same results must not pull the
+  raw comp up, nor a raw card pull the slab comp down.
+- **Below `PEER_MIN_SAMPLE` listings a group is not priced at all.** A median of
+  three asks is noise, and noise here means buying something.
+
+Lots, proxies, multi-quantity and non-English listings are excluded from the pool
+as well as from the results — a 50-card lot at $30 would otherwise drag the
+single-card comp down with it.
+
+Every deal produced this way carries a `PEER_COMP` risk flag and is discounted
+for it. Read the board as "cheaper than everyone else is asking", not "below
+market" — those are different claims, and only the second one is what made your
+manual trade work.
+
+Note that this does not reduce the licence exposure. §9(e) covers using eBay
+content "either alone or in combination with third-party information" to model
+prices, and deriving price statistics purely from eBay data arguably engages
+§8.1(d) more, not less.
+
 ### PriceCharting API
 1. A PriceCharting API subscription gives you a token.
 2. Set `PRICECHARTING_TOKEN`.
@@ -345,6 +384,7 @@ src/pokemon_arb/
     matcher.py         listing <-> product confidence scoring
   pipeline/
     scoring.py         comp selection, fees, tax, risk flags, ranking
+    peer_comps.py      valuing a listing against other live eBay listings
     scan.py            the orchestrator
   sources/
     ebay.py            Browse API client (OAuth, filters, pagination)

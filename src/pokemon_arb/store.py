@@ -22,7 +22,7 @@ from .sources.ebay import EbayListing
 
 
 def upsert_product(session: Session, values: dict[str, Any]) -> tuple[Product, bool]:
-    product = session.scalar(select(Product).where(Product.pc_id == values["pc_id"]))
+    product = session.scalar(select(Product).where(Product.external_id == values["external_id"]))
     created = product is None
     if product is None:
         product = Product(**values)
@@ -135,6 +135,24 @@ def upsert_target(
         target.priority = priority
         # Deliberately does NOT re-enable: rebuilding the target list must not
         # resurrect targets the user turned off.
+    session.flush()
+    return target
+
+
+def add_custom_target(session: Session, query: str) -> Target | None:
+    """A free-text search the user typed, with no comp behind it."""
+    query = " ".join(query.strip().split())
+    if not query:
+        return None
+    existing = session.scalar(
+        select(Target).where(Target.query == query, Target.product_id.is_(None))
+    )
+    if existing is not None:
+        existing.enabled = True
+        session.flush()
+        return existing
+    target = Target(query=query, product_id=None, set_name=None, priority=0, enabled=True)
+    session.add(target)
     session.flush()
     return target
 

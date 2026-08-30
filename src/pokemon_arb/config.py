@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     # --- PriceCharting -------------------------------------------------
     pricecharting_token: Secret = None
 
+    # --- valuation ---------------------------------------------------------
+    # "pricecharting" values against recent sold prices and needs a token.
+    # "peer" needs no second API: a listing is valued against what other live
+    # eBay listings for the same card are asking. Weaker, and flagged as such.
+    comp_source: str = "pricecharting"
+    # Asks skew high and the listings that clear sit low in the distribution,
+    # so the comp is a low percentile of the peer asks, not the median.
+    peer_comp_percentile: float = 0.35
+    # Below this many peers a group is not priced at all.
+    peer_min_sample: int = 5
+
     # --- deal economics (all rates are fractions of 1.0) ---------------
     # eBay final value fee for trading cards (incl. payment processing).
     sell_fee_rate: float = 0.1355
@@ -97,6 +108,10 @@ class Settings(BaseSettings):
     # Set on Railway to run the scan loop inside the web process. 0 disables.
     scan_interval_minutes: int = 0
     seed_demo_on_startup: bool = False
+
+    @property
+    def uses_peer_comps(self) -> bool:
+        return self.comp_source.strip().lower() == "peer"
 
     @property
     def sqlalchemy_url(self) -> str:

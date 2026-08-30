@@ -37,7 +37,8 @@
   <section class="panel">
     <h2>The math</h2>
     <table class="math">
-      <tr><td>Comp used</td><td class="num">{{ deal.market_value_cents | money }}</td><td class="note">PriceCharting recent sales</td></tr>
+      <tr><td>Comp used</td><td class="num">{{ deal.market_value_cents | money }}</td>
+        <td class="note">{{ 'other live eBay asks' if settings.uses_peer_comps else 'PriceCharting recent sales' }}</td></tr>
       <tr><td>Condition haircut</td><td class="num">&times;{{ settings.condition_haircut }}</td><td class="note">raw cards clear under the running average</td></tr>
       <tr class="sum"><td>Realistic resale</td><td class="num">{{ deal.adjusted_value_cents | money }}</td><td></td></tr>
       <tr><td>Selling fees</td><td class="num bad">-{{ (deal.adjusted_value_cents - deal.net_proceeds_cents - settings.outbound_shipping_cents) | money }}</td><td class="note">{{ (settings.sell_fee_rate) | pct(1) }} + {{ settings.sell_fee_fixed_cents | money }}</td></tr>

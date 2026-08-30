@@ -33,7 +33,7 @@ def charizard():
     from pokemon_arb.models import Product
 
     return Product(
-        pc_id="pc-1",
+        external_id="pc-1",
         name="Charizard #4",
         set_name="Pokemon Base Set",
         card_number="4",
@@ -76,7 +76,7 @@ def listing_factory():
 @pytest.fixture
 def pc_product():
     return PCProduct(
-        pc_id="pc-1",
+        external_id="pc-1",
         name="Charizard #4",
         set_name="Pokemon Base Set",
         prices={

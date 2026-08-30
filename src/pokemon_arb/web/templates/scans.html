@@ -8,11 +8,18 @@
   <div class="stat"><span class="label">Mode</span><span class="value small">
     {% if settings.demo_mode or not settings.has_ebay_credentials %}demo (no eBay keys){% else %}live &middot; {{ settings.ebay_env }}{% endif %}
   </span></div>
+  <div class="stat"><span class="label">Comps</span><span class="value small">
+    {{ 'eBay peer asks' if settings.uses_peer_comps else 'PriceCharting sold' }}
+  </span></div>
 </section>
 
 <section class="panel setup">
   <h2>What to scan for</h2>
-  {% if not counts.products %}
+  {% if settings.uses_peer_comps %}
+    <p class="sub">Comps come from other live eBay listings, so there is no price
+      guide to sync &mdash; the terms you enter become the searches directly.
+      Currently <strong>{{ counts.targets }}</strong> search target(s).</p>
+  {% elif not counts.products %}
     <p class="warn-text">Nothing is being tracked yet, so a scan has nothing to
       search for. Name a few cards below to get started.</p>
   {% else %}
@@ -25,9 +32,11 @@
       <input type="text" name="queries"
              placeholder="charizard, umbreon vmax  (blank = whole price guide)">
     </label>
+    {% if not settings.uses_peer_comps %}
     <label>Top cards per set
       <input type="number" name="per_set" value="25" min="1" max="200">
     </label>
+    {% endif %}
     <label class="check">
       <input type="checkbox" name="replace" value="true"> replace what is tracked
     </label>
@@ -36,12 +45,27 @@
     </button>
   </form>
 
+  {% if settings.uses_peer_comps %}
+  <p class="sub">
+    Each term becomes an eBay search. Within one search, listings for the same
+    card and grade are pooled and a listing is judged against the others &mdash;
+    never against itself. A group needs at least
+    {{ settings.peer_min_sample }} listings before it is priced at all.
+  </p>
+  <p class="sub warn-text">
+    Asking prices are not sold prices. Sellers list optimistically, so the
+    modelled upside is likely overstated and every deal carries a
+    <strong>peer comp</strong> risk flag. Treat this as "cheaper than everyone
+    else is asking", not "below market".
+  </p>
+  {% else %}
   <p class="sub">
     Names are looked up on PriceCharting, and the most valuable cards in each set
     they belong to become search targets. Leave the box blank to pull the entire
     pokemon-cards price guide &mdash; that needs a subscription and takes a few
     minutes.
   </p>
+  {% endif %}
   <p class="sub">
     <strong>replace what is tracked</strong> empties the catalog first, so you end
     up with exactly what you asked for. Without it the new cards are added to what

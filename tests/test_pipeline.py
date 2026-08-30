@@ -39,7 +39,8 @@ def test_sync_is_idempotent(pc_product):
     service.sync_products([pc_product])
     with get_sessionmaker()() as session:
         assert (
-            session.scalar(select(Product).where(Product.pc_id == "pc-1")).ungraded_cents == 45000
+            session.scalar(select(Product).where(Product.external_id == "pc-1")).ungraded_cents
+            == 45000
         )
         assert len(list(session.scalars(select(Product)))) == 1
 

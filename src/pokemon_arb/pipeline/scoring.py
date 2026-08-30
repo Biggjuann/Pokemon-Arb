@@ -32,6 +32,11 @@ RISK_WEIGHTS: dict[str, tuple[float, str]] = {
     "GRADE_ASSUMED": (0.25, "Graded slab with no comp for that grade; valued conservatively"),
     "UNKNOWN_GRADER": (0.30, "Slab from an unnamed or low-trust grading company"),
     "THIN_COMPS": (0.30, "Very few recent sales -- the market value is noisy"),
+    "PEER_COMP": (
+        0.20,
+        "Valued against what other live listings are asking, not against sold "
+        "prices -- asks skew high, so the upside is likely overstated",
+    ),
     "STALE_COMPS": (0.15, "Comp prices have not been refreshed recently"),
     "NEW_SELLER": (0.25, "Seller has almost no feedback history"),
     "LOW_FEEDBACK": (0.20, "Seller feedback below 98%"),
@@ -144,7 +149,9 @@ def collect_risk_flags(
     if match.confidence < 0.75:
         flags.append("LOW_CONFIDENCE_MATCH")
 
-    if (product.sales_volume or 0) < settings.min_sales_volume:
+    # None means the source publishes no sales count, which is not the same
+    # as a card that does not sell.
+    if product.sales_volume is not None and product.sales_volume < settings.min_sales_volume:
         flags.append("THIN_COMPS")
     if product.last_synced_at is None or (utcnow() - product.last_synced_at > STALE_AFTER):
         flags.append("STALE_COMPS")
@@ -179,9 +186,19 @@ def evaluate(
     match: MatchResult,
     parsed: ParsedTitle,
     settings: Settings,
+    comp_override: tuple[int, str] | None = None,
 ) -> DealEconomics:
-    """Full buy-side and sell-side math for one listing/product pairing."""
-    comp_cents, comp_label, comp_flags = select_comp(parsed, product)
+    """Full buy-side and sell-side math for one listing/product pairing.
+
+    ``comp_override`` supplies a value the product itself does not carry --
+    used by peer comps, where the reference price is computed per listing from
+    the other live listings rather than read off a stored comp.
+    """
+    if comp_override is not None:
+        comp_cents, comp_label = comp_override
+        comp_flags = ["PEER_COMP"]
+    else:
+        comp_cents, comp_label, comp_flags = select_comp(parsed, product)
     market_value = comp_cents or 0
     adjusted_value = round(market_value * settings.condition_haircut)
 

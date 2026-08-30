@@ -258,7 +258,9 @@ def test_sync_checks_cancel_on_every_row_not_every_hundredth():
 
     # Products with no ungraded price are skipped by sync_products.
     skipped = [
-        PCProduct(pc_id=f"p{i}", name=f"Card #{i}", set_name="Set", prices={"ungraded_cents": None})
+        PCProduct(
+            external_id=f"p{i}", name=f"Card #{i}", set_name="Set", prices={"ungraded_cents": None}
+        )
         for i in range(50)
     ]
     ScanService(ebay_client=DemoEbayClient()).sync_products(skipped, should_cancel=should_cancel)

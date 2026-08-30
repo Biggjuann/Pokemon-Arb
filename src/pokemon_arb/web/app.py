@@ -145,12 +145,24 @@ def _sync_job(queries: list[str], per_set: int, replace: bool = False) -> str:
     """
     from ..pipeline.scan import ScanService
 
+    settings = get_settings()
     cleared = ""
     if replace:
         with get_sessionmaker()() as session:
             counts = store.clear_catalog(session)
             session.commit()
         cleared = f"replaced {counts['products']} cards, "
+
+    if settings.uses_peer_comps:
+        # Nothing to sync: a peer comp is computed from the search results
+        # themselves, so the typed queries are the targets.
+        if not queries:
+            return "peer comps need at least one search term -- name a card"
+        with get_sessionmaker()() as session:
+            added = [store.add_custom_target(session, term) for term in queries]
+            session.commit()
+        count = len([t for t in added if t is not None])
+        return f"{cleared}{count} search target(s) active (peer comps, no price guide)"
 
     service = ScanService()
     cancel = _job_cancel.is_set

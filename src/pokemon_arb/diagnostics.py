@@ -238,6 +238,13 @@ def check_ebay(settings: Settings, *, live: bool = True) -> Report:
 
 def check_pricecharting(settings: Settings, *, live: bool = True) -> Report:
     report = Report()
+    if settings.uses_peer_comps:
+        report.add(
+            "PriceCharting",
+            None,
+            "not used: COMP_SOURCE=peer values listings against other live eBay asks",
+        )
+        return report
     if not settings.pricecharting_token:
         report.add(
             "PriceCharting token",

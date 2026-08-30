@@ -50,7 +50,7 @@ def demo_products() -> list[PCProduct]:
     for index, (set_name, name, ungraded, g9, psa10, volume) in enumerate(DEMO_CATALOG):
         products.append(
             PCProduct(
-                pc_id=f"demo-{index:04d}",
+                external_id=f"demo-{index:04d}",
                 name=name,
                 set_name=set_name,
                 prices={

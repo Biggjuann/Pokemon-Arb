@@ -44,10 +44,13 @@ def test_proxy_listing_is_rejected(charizard):
 
 def test_variant_mismatch_is_penalized():
     first_ed = Product(
-        pc_id="a", name="Charizard [1st Edition] #4", set_name="Pokemon Base Set", card_number="4"
+        external_id="a",
+        name="Charizard [1st Edition] #4",
+        set_name="Pokemon Base Set",
+        card_number="4",
     )
     unlimited = Product(
-        pc_id="b", name="Charizard #4", set_name="Pokemon Base Set", card_number="4"
+        external_id="b", name="Charizard #4", set_name="Pokemon Base Set", card_number="4"
     )
     parsed = parse_title("Charizard 4/102 Base Set Unlimited Holo")
     assert score_pair(parsed, first_ed).confidence < score_pair(parsed, unlimited).confidence
@@ -55,17 +58,17 @@ def test_variant_mismatch_is_penalized():
 
 def test_best_match_picks_the_right_card_among_candidates():
     candidates = [
-        Product(pc_id="a", name="Charizard #4", set_name="Pokemon Base Set", card_number="4"),
-        Product(pc_id="b", name="Blastoise #2", set_name="Pokemon Base Set", card_number="2"),
+        Product(external_id="a", name="Charizard #4", set_name="Pokemon Base Set", card_number="4"),
+        Product(external_id="b", name="Blastoise #2", set_name="Pokemon Base Set", card_number="2"),
         Product(
-            pc_id="c",
+            external_id="c",
             name="Umbreon VMAX (Alternate Art) #215",
             set_name="Pokemon Evolving Skies",
             card_number="215",
         ),
     ]
     result = best_match("Umbreon VMAX Alt Art 215/203 Evolving Skies NM", candidates)
-    assert result.product.pc_id == "c"
+    assert result.product.external_id == "c"
     assert result.confidence >= 0.85
 
 
@@ -78,7 +81,7 @@ def test_best_match_with_no_candidates():
 def test_name_coverage_guards_against_substring_inflation():
     """'Charizard' must not score as a confident match for 'Charizard VMAX'."""
     vmax = Product(
-        pc_id="d",
+        external_id="d",
         name="Charizard VMAX (Rainbow) #74",
         set_name="Pokemon Champions Path",
         card_number="74",

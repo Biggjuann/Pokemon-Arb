@@ -58,7 +58,7 @@ def _price(value: Any, *, pennies: bool) -> int | None:
 
 @dataclass
 class PCProduct:
-    pc_id: str
+    external_id: str
     name: str
     set_name: str
     prices: dict[str, int | None] = field(default_factory=dict)
@@ -77,7 +77,7 @@ class PCProduct:
         except (TypeError, ValueError):
             volume = None
         return cls(
-            pc_id=str(payload.get("id", "")).strip(),
+            external_id=str(payload.get("id", "")).strip(),
             name=str(payload.get("product-name", "")).strip(),
             set_name=str(payload.get("console-name", "")).strip(),
             prices=prices,
@@ -90,12 +90,12 @@ class PCProduct:
 
         name_tokens, number, _variants = parse_product_name(self.name)
         return {
-            "pc_id": self.pc_id,
+            "external_id": self.external_id,
             "name": self.name,
             "set_name": self.set_name,
             "card_number": number,
             "release_date": self.release_date,
-            "sales_volume": self.sales_volume or 0,
+            "sales_volume": self.sales_volume,
             "search_blob": f"{name_tokens} {self.set_name.lower()}".strip(),
             "last_synced_at": utcnow(),
             **self.prices,
@@ -106,7 +106,7 @@ class PCProduct:
         """Filter out sealed product rows that share the cards category."""
         lowered = self.name.lower()
         junk = ("booster box", "booster pack", "elite trainer", "sealed", "tin ", "bundle")
-        return self.pc_id != "" and not any(j in lowered for j in junk)
+        return self.external_id != "" and not any(j in lowered for j in junk)
 
 
 class PriceChartingClient:
@@ -151,8 +151,8 @@ class PriceChartingClient:
             raise PriceChartingError(payload.get("error-message", "unknown PriceCharting error"))
         return [PCProduct.from_payload(p, pennies=True) for p in payload.get("products", [])]
 
-    def get_product(self, pc_id: str) -> PCProduct | None:
-        payload = self._get("/api/product", {"t": self._require_token(), "id": pc_id}).json()
+    def get_product(self, external_id: str) -> PCProduct | None:
+        payload = self._get("/api/product", {"t": self._require_token(), "id": external_id}).json()
         if payload.get("status") == "error":
             return None
         return PCProduct.from_payload(payload, pennies=True)

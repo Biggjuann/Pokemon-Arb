@@ -21,10 +21,11 @@ from .. import store
 from ..config import Settings, get_settings
 from ..db import get_sessionmaker
 from ..matching.matcher import best_match
-from ..matching.normalize import parse_title
+from ..matching.normalize import ParsedTitle, parse_title
 from ..models import Product, ScanRun, Target, utcnow
 from ..sources.ebay import EbayClient, EbayError, EbayListing
 from ..sources.pricecharting import PriceChartingClient
+from .peer_comps import PeerGroup, build_groups, group_key, percentile
 from .scoring import evaluate, max_actionable_price_cents
 
 log = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class ScanStats:
     skipped_no_comp: int = 0
     errors: int = 0
     excluded_by_keyword: int = 0
+    skipped_thin_peers: int = 0
     error_samples: list[str] = field(default_factory=list)
 
     def record_error(self, message: str) -> None:
@@ -123,7 +125,7 @@ class ScanService:
                 if should_cancel is not None and should_cancel():
                     log.info("sync cancelled after %s cards", count)
                     break
-                if not pc_product.pc_id or not pc_product.prices.get("ungraded_cents"):
+                if not pc_product.external_id or not pc_product.prices.get("ungraded_cents"):
                     continue
                 product, _created = store.upsert_product(session, pc_product.to_model_kwargs())
                 session.flush()
@@ -162,6 +164,10 @@ class ScanService:
         This is the manual heuristic that worked, automated: the chase cards
         carry the spread, and they are the ones sellers most often mis-price.
         """
+        if self.settings.uses_peer_comps:
+            # There is no price guide to rank, so targets are whatever the
+            # user typed rather than the top cards of each set.
+            return 0
         per_set = per_set or self.settings.scan_top_cards_per_set
         created = 0
         with self.session_factory() as session:
@@ -277,6 +283,7 @@ class ScanService:
                     "skipped_no_comp": stats.skipped_no_comp,
                     "errors": stats.errors,
                     "excluded_by_keyword": stats.excluded_by_keyword,
+                    "skipped_thin_peers": stats.skipped_thin_peers,
                 }
                 session.commit()
                 return run
@@ -341,6 +348,10 @@ class ScanService:
         )
         stats.api_calls += self.ebay.call_count - before_calls
 
+        if self.settings.uses_peer_comps:
+            self._scan_target_peer(session, target, listings, stats, should_cancel)
+            return
+
         for data in listings:
             # A single target can return hundreds of listings; without this a
             # cancel waits for all of them to be matched and priced.
@@ -349,23 +360,124 @@ class ScanService:
             stats.listings_seen += 1
             self._process_listing(session, data, product, stats)
 
-    def _process_listing(
-        self, session: Session, data: EbayListing, target_product: Product | None, stats: ScanStats
+    def _scan_target_peer(
+        self,
+        session: Session,
+        target: Target,
+        listings: list[EbayListing],
+        stats: ScanStats,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:
-        title = data.title.lower()
-        hit = next((term for term in self._exclusions if term in title), None)
-        if hit:
-            # Checked before the listing is stored: an excluded listing should
-            # leave no trace beyond the counter.
-            stats.excluded_by_keyword += 1
-            store.record_keyword_hit(session, hit)
-            return
+        """Value this target's listings against each other.
+
+        Needs the whole result set before anything can be priced, so unlike
+        the catalog path this is two passes: gather, then judge.
+        """
+        candidates: list[tuple[EbayListing, ParsedTitle]] = []
+        for data in listings:
+            if should_cancel is not None and should_cancel():
+                return
+            stats.listings_seen += 1
+            title = data.title.lower()
+            hit = next((term for term in self._exclusions if term in title), None)
+            if hit:
+                stats.excluded_by_keyword += 1
+                store.record_keyword_hit(session, hit)
+                continue
+            parsed = parse_title(data.title)
+            # Junk must not be priced *or* counted as a peer: a lot of 50 cards
+            # at $30 would drag the comp for a single card down with it.
+            if (
+                parsed.lot_words
+                or parsed.counterfeit_words
+                or parsed.quantity > 1
+                or (parsed.language and parsed.language != "english")
+            ):
+                stats.rejected_matches += 1
+                continue
+            candidates.append((data, parsed))
+
+        groups = build_groups(candidates)
+        for (segment, number), group in groups.items():
+            if group.sample_size < self.settings.peer_min_sample:
+                stats.skipped_thin_peers += 1
+                continue
+            product = self._peer_product(session, target, segment, number, group)
+            for data, parsed in candidates:
+                if group_key(parsed) != (segment, number):
+                    continue
+                if should_cancel is not None and should_cancel():
+                    return
+                landed = data.price_cents + (data.shipping_cents or 0)
+                comp = group.comp_excluding(landed, self.settings.peer_comp_percentile)
+                if comp is None:
+                    continue
+                self._process_listing(
+                    session,
+                    data,
+                    product,
+                    stats,
+                    parsed=parsed,
+                    comp_override=(comp, f"{group.sample_size - 1} peer asks, {segment}"),
+                )
+
+    def _peer_product(
+        self,
+        session: Session,
+        target: Target,
+        segment: str,
+        number: str | None,
+        group: PeerGroup,
+    ) -> Product:
+        """A catalog row standing in for a card the price guide never supplied."""
+        label = target.query.strip() or "eBay search"
+        display = f"{label}{f' #{number}' if number else ''}"
+        if segment != "raw":
+            display = f"{display} [{segment}]"
+        product, _created = store.upsert_product(
+            session,
+            {
+                "external_id": f"peer:{target.id}:{segment}:{number or '-'}",
+                "name": display,
+                "set_name": target.set_name or "eBay peer comps",
+                "card_number": number,
+                "release_date": None,
+                # For reference on the deal page; each deal carries its own
+                # self-excluded comp in market_value_cents.
+                "ungraded_cents": percentile(group.prices, self.settings.peer_comp_percentile),
+                "sales_volume": None,
+                "search_blob": display.lower(),
+                "last_synced_at": utcnow(),
+            },
+        )
+        session.flush()
+        return product
+
+    def _process_listing(
+        self,
+        session: Session,
+        data: EbayListing,
+        target_product: Product | None,
+        stats: ScanStats,
+        parsed: ParsedTitle | None = None,
+        comp_override: tuple[int, str] | None = None,
+    ) -> None:
+        if comp_override is None:
+            title = data.title.lower()
+            hit = next((term for term in self._exclusions if term in title), None)
+            if hit:
+                # Checked before the listing is stored: an excluded listing
+                # should leave no trace beyond the counter.
+                stats.excluded_by_keyword += 1
+                store.record_keyword_hit(session, hit)
+                return
 
         listing, created = store.upsert_listing(session, data)
         if created:
             stats.listings_new += 1
 
-        parsed = parse_title(data.title)
+        if parsed is None:
+            parsed = parse_title(data.title)
 
         # Consider the card we searched for plus anything else in the catalog
         # sharing a card number in the title -- that is how "Charizard 4"
@@ -384,7 +496,9 @@ class ScanService:
             stats.rejected_matches += 1
             return
 
-        econ = evaluate(listing, match.product, match, parsed, self.settings)
+        econ = evaluate(
+            listing, match.product, match, parsed, self.settings, comp_override=comp_override
+        )
         if not econ.qualifies:
             if match.rejected or match.confidence < self.settings.min_match_confidence:
                 stats.rejected_matches += 1
